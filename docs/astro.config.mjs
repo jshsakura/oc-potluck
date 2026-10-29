@@ -15,6 +15,13 @@ export default defineConfig({
     title: 'potluck.',
     description: 'Local multiplayer with friends through LDN MITM, nearby or far away.',
     favicon: '/favicon.svg',
+    head: [
+      { tag: 'meta', attrs: { property: 'og:image', content: 'https://jshsakura.github.io/oc-potluck/og-image.png' } },
+      { tag: 'meta', attrs: { property: 'og:image:width', content: '1200' } },
+      { tag: 'meta', attrs: { property: 'og:image:height', content: '630' } },
+      { tag: 'meta', attrs: { property: 'og:image:alt', content: 'potluck. Local wireless play, over the internet.' } },
+      { tag: 'meta', attrs: { name: 'twitter:image', content: 'https://jshsakura.github.io/oc-potluck/og-image.png' } },
+    ],
     components: { Hero: './src/components/Hero.astro', SiteTitle: './src/components/SiteTitle.astro' },
     customCss: ['./src/styles/custom.css'],
     defaultLocale: 'root',
