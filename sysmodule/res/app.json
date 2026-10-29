@@ -6,7 +6,7 @@
     "main_thread_stack_size": "0x8000",
     "main_thread_priority": 42,
     "default_cpu_id": 3,
-    "version": "0.3.12",
+    "version": "0.3.13",
     "process_category": 1,
     "is_retail": true,
     "pool_partition": 2,

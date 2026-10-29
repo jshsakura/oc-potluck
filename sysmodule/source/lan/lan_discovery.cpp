@@ -119,7 +119,7 @@ bool MatchesFilter(const NetworkInfo& info, const ScanFilter& filter) {
 } // namespace
 
 LanDiscovery::~LanDiscovery() {
-    // Also undoes a half-finished Initialize (open request, changed MTU, socket)
+    // Also undoes a half-finished Initialize (open request, socket)
     static_cast<void>(Finalize());
     delete[] m_stack_memory;
 }
@@ -147,12 +147,13 @@ Result LanDiscovery::Initialize(EventCallback callback, void* context) {
 Result LanDiscovery::SetUpLocked(EventCallback callback, void* context) {
     NifmNetworkProfileData profile;
     R_TRY(LogFailure(nifmGetCurrentNetworkProfile(&profile), "reading the network profile (is the console on Wi-Fi?)"));
+    // ldn_mitm peers send 1500-byte frames. The profile keeps 1500 afterwards:
+    // putting the old value back rewrote the Wi-Fi profile on every game exit,
+    // and each rewrite can drop the connection the next game is using.
     if (profile.ip_setting_data.mtu != LAN_MTU) {
-        const u16 original = profile.ip_setting_data.mtu;
+        LOG_INFO("LAN: setting the Wi-Fi profile MTU %u -> %u (kept after local mode)", profile.ip_setting_data.mtu, LAN_MTU);
         profile.ip_setting_data.mtu = LAN_MTU;
         R_TRY(LogFailure(nifmSetNetworkProfile(&profile, &profile.uuid), "setting the network MTU"));
-        m_original_mtu = original;
-        m_mtu_changed = true;
     }
 
     R_TRY(LogFailure(nifmCreateRequest(&m_request, true), "creating the network request"));
@@ -182,24 +183,13 @@ Result LanDiscovery::TearDownLocked() {
     CloseTcp();
     ResetStations();
 
-    Result rc = ResultSuccess();
     if (m_request_open) {
         static_cast<void>(nifmRequestCancel(&m_request));
         nifmRequestClose(&m_request);
         m_request_open = false;
     }
-    if (m_mtu_changed) {
-        NifmNetworkProfileData profile;
-        rc = nifmGetCurrentNetworkProfile(&profile);
-        if (R_SUCCEEDED(rc)) {
-            profile.ip_setting_data.mtu = m_original_mtu;
-            rc = nifmSetNetworkProfile(&profile, &profile.uuid);
-        }
-        if (R_FAILED(rc)) LOG_WARN("LAN: could not restore MTU %u: 0x%x", m_original_mtu, rc.GetValue());
-        m_mtu_changed = false;
-    }
     m_scan_count = 0;
-    return rc;
+    R_SUCCEED();
 }
 
 Result LanDiscovery::Finalize() {

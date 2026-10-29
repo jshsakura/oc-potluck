@@ -10,8 +10,8 @@
  *
  * Changes from ldn_mitm: fixed buffers instead of std::function and an
  * unbounded scan map, one mutex for every field the worker and the IPC
- * threads share, bounded copies of peer data, and the MTU is only rewritten
- * when it is not already 1500.
+ * threads share, bounded copies of peer data, and the MTU is set to 1500
+ * once and kept, instead of being restored on every exit.
  *
  * @copyright Copyright (c) 2026 potluck contributors
  * @copyright Copyright (c) 2019 spacemeowx2 (ldn_mitm, original implementation)
@@ -119,8 +119,6 @@ private:
 
     NifmRequest m_request{};
     bool m_request_open = false;
-    u16 m_original_mtu = 0;
-    bool m_mtu_changed = false;
 
     os::ThreadType m_thread{};
     u8* m_stack_memory = nullptr;
