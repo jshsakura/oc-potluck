@@ -60,7 +60,13 @@ Use level 2 briefly to reproduce a problem. Verbose logging adds SD writes and w
 
 ## Application timing
 
-Overlay settings save automatically. Remote/local mode needs a **fully restarted game**; Off and enabling a module that booted off follow the reboot notice. P2P applies next room. Leave the room before channel/reconnect changes. Reboot after installer server/P2P edits or manual INI edits.
+Overlay changes save right away. When they apply depends on the setting:
+
+- **Switching remote and local:** after you fully close and reopen the game.
+- **Turning off, or back on after it was off:** after a reboot.
+- **P2P:** from the next room you join.
+- **Channel change and reconnect:** leave the current room first.
+- **Server or P2P changed in the installer, or the INI edited by hand:** reboot.
 
 ## Ineffective legacy options
 

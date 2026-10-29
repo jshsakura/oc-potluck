@@ -7,13 +7,15 @@ PotLuck bridges local wireless multiplayer through LDN MITM. It runs with Atmosp
 
 ## Choose your setup
 
-| Mode | When to choose it | What you need |
+| Mode | When to use it | What you need |
 | --- | --- | --- |
-| Local | Everyone is on the same LAN/Wi-Fi | PotLuck or compatible ldn_mitm peers; no relay |
-| Remote | Players are on different networks | Same relay address, port and channel on every console |
-| Off | Temporarily stop interception | Follow the overlay's reboot notice |
+| Local | Friends in the same home, on the same Wi-Fi | Their Switch also runs PotLuck (or ldn_mitm). No server needed. |
+| Remote | Friends far away, over the internet | Everyone enters the same relay address and channel. |
+| Off | You don't want PotLuck right now | Nothing. After a reboot the Switch uses its own local wireless again. |
 
-A new install defaults to remote mode. **An empty server address makes it operate as local mode.** No public relay is bundled. Local mode uses UDP and TCP port 11452 inside your LAN; guest Wi-Fi, AP isolation and separate VLANs can prevent discovery.
+A new install starts in remote mode, but **until you enter a server address it behaves like local mode.** PotLuck ships no public server, so remote play needs a relay that you or a friend runs.
+
+If rooms don't show up in local mode, check the router. Guest Wi-Fi, settings that block devices from talking to each other (AP isolation) and separate networks (VLANs) stop discovery. Local mode uses port 11452 (UDP and TCP) inside your network.
 
 ## Three components
 
