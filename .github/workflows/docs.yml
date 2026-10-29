@@ -1,0 +1,64 @@
+name: Documentation
+
+on:
+  pull_request:
+    paths: ['docs/**', 'deploy/compose.nas.yml', '.github/workflows/docs.yml', 'scripts/ci/run-limited.sh']
+  push:
+    branches: [main]
+    paths: ['docs/**', 'deploy/compose.nas.yml', '.github/workflows/docs.yml', 'scripts/ci/run-limited.sh']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-docs:
+    name: Build documentation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: docs/package-lock.json
+      - name: Establish aggregate 4 GiB build limit
+        run: bash scripts/ci/run-limited.sh --setup
+      - name: Install dependencies
+        run: bash scripts/ci/run-limited.sh npm ci --prefix docs
+      - name: Build static site and search index
+        run: bash scripts/ci/run-limited.sh npm run build --prefix docs
+      - uses: actions/upload-artifact@v7
+        with:
+          name: starlight-docs
+          path: docs/dist
+          if-no-files-found: error
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build-docs
+    if: github.repository == 'jshsakura/oc-potluck' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+      actions: read
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: starlight-docs
+          path: site
+      - uses: actions/configure-pages@v6
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: site
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v5

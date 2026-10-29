@@ -1,0 +1,64 @@
+# PotLuck relay for Docker Compose / Synology Container Manager.
+# Keep the project name stable to retain its named data volume.
+services:
+  ldn-server:
+    image: ${LDN_SERVER_IMAGE:-ghcr.io/jshsakura/oc-potluck-server:v0.2.3}
+    restart: unless-stopped
+    user: "10001:10001"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 1g
+    memswap_limit: 1g
+    pids_limit: 256
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    environment:
+      LDN_HOST: 0.0.0.0
+      LDN_PORT: "30456"
+      LDN_REDIS_HOST: redis
+      LDN_REDIS_PORT: "6379"
+      IP_BAN_FILE_PATH: /data/potluck/bannedips.txt
+    ports:
+      - "${LDN_BIND_IP:-0.0.0.0}:${LDN_PORT:-30456}:30456/tcp"
+    volumes:
+      - ldn-data:/data/potluck
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks: [default, metrics]
+    logging:
+      driver: json-file
+      options: {max-size: 10m, max-file: "3"}
+
+  redis:
+    image: redis/redis-stack-server@sha256:798ab84d9f266936b034ab11c4d04a2b8e4b441884c5aa7d17ac951eefdf742a
+    restart: unless-stopped
+    user: "10001:10001"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 256m
+    memswap_limit: 256m
+    pids_limit: 64
+    entrypoint: ["/opt/redis-stack/bin/redis-server"]
+    command: ["--loadmodule", "/opt/redis-stack/lib/rejson.so", "--bind", "0.0.0.0", "--protected-mode", "no", "--dir", "/data", "--save", "", "--appendonly", "no", "--maxmemory", "128mb", "--maxmemory-policy", "noeviction"]
+    networks: [metrics]
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+      - /data:size=16m,uid=10001,gid=10001
+    healthcheck:
+      test: ["CMD", "/opt/redis-stack/bin/redis-cli", "-h", "redis", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    logging:
+      driver: json-file
+      options: {max-size: 10m, max-file: "3"}
+
+volumes:
+  ldn-data:
+
+networks:
+  metrics:
+    internal: true

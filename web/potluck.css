@@ -1,0 +1,131 @@
+/* Public site additions share the CookingFoil palette in style.css. */
+:root{--board-radius:16px;--board-gap:24px;--board-state-ink:color-mix(in srgb,var(--good) 80%,var(--ink));--board-state-bg:color-mix(in srgb,var(--good) 8%,var(--surface))}
+.top .chip{min-height:44px}
+.top #theme-btn{width:44px}
+.home footer p{margin:0 auto}
+.board{max-width:1120px;margin-inline:auto;padding:40px 0}
+.board [hidden]{display:none}
+.board-head{display:flex;justify-content:space-between;align-items:flex-end;gap:32px;flex-wrap:wrap;padding-bottom:24px;margin-bottom:24px;border-bottom:1px solid var(--line)}
+.home .board h2{font-size:clamp(24px,2.4vw,30px);letter-spacing:-.035em}
+.board-title{display:flex;align-items:center;gap:16px}
+.board-title h1{min-width:0}
+.home .board .intro-desc{max-width:560px;margin:16px 0 0;font-size:16px;line-height:1.8}
+.totals{display:grid;grid-template-columns:repeat(3,minmax(120px,1fr));gap:12px;margin:0}
+.stat{display:grid;grid-template-columns:auto 1fr;grid-template-rows:auto auto;column-gap:12px;row-gap:2px;align-items:center;padding:16px 20px;border:1px solid var(--line);border-radius:var(--board-radius);background:var(--surface)}
+.stat-icon{grid-row:1/3;display:grid;place-items:center;width:40px;height:40px;border-radius:12px;background:var(--sunk);color:var(--secondary)}
+.stat-icon svg{width:22px;height:22px}
+.stat-accent{background:var(--butter-soft);border-color:color-mix(in srgb,var(--butter) 45%,var(--line))}
+.stat-accent .stat-icon{background:var(--butter);color:var(--butter-ink)}
+.totals dt{font-size:12px;font-weight:600;color:var(--secondary)}
+.totals dd{margin:0;font:800 26px/1.1 "Baloo 2",system-ui,sans-serif;font-variant-numeric:tabular-nums}
+.games{display:grid;gap:40px}
+.game{min-width:0}
+.game-header{display:flex;align-items:baseline;justify-content:space-between;gap:12px 24px;flex-wrap:wrap}
+.home .board .game-name{display:block;margin:0;font-size:20px;font-weight:800;line-height:1.4;letter-spacing:-.035em;overflow-wrap:anywhere}
+.game-summary{font-size:13px;color:var(--secondary);white-space:nowrap}
+.game-info{margin:0 0 8px;font-size:12px;color:var(--secondary);width:fit-content;max-width:100%}
+.game-info summary{display:flex;align-items:center;gap:12px;min-height:44px;width:fit-content;cursor:pointer;list-style:none}
+.game-info summary::-webkit-details-marker{display:none}
+.game-info summary::after{content:'+';font:16px ui-monospace,monospace}
+.game-info[open] summary::after{content:'−'}
+.game-info summary:hover{color:var(--ink)}
+.game-info summary:focus-visible{outline:3px solid var(--butter);outline-offset:4px;border-radius:4px}
+.game-id-label{margin-right:8px}
+.game-info code{font-size:12px;overflow-wrap:anywhere}
+.game-rooms{display:grid;gap:12px}
+.room{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:24px;align-items:center;padding:24px;border:1px solid var(--line);border-radius:var(--board-radius);background:var(--surface)}
+.room-body{min-width:0;display:grid;gap:16px}
+.room-meta{display:flex;align-items:center;gap:8px 12px;flex-wrap:wrap;font-size:12px}
+.room-label{font-weight:700;color:var(--secondary)}
+.room-status{font-weight:700;padding:4px 8px;border-radius:6px;line-height:1.4}
+.room-status.available{color:var(--board-state-ink);background:var(--board-state-bg)}
+.room-status.busy{color:var(--secondary);background:var(--sunk)}
+.room-privacy{color:var(--secondary)}
+.names{display:flex;flex-wrap:wrap;gap:12px 24px;margin:0;padding:0;list-style:none}
+.person{display:inline-flex;align-items:center;gap:8px;max-width:100%;min-width:0}
+.person-mark{display:grid;place-items:center;flex:none;width:32px;height:32px;border-radius:50%;background:var(--sunk);color:var(--secondary);font-size:13px;font-weight:700}
+.person-name{font-size:16px;line-height:1.5;font-weight:650;overflow-wrap:anywhere;min-width:0}
+.home .board .room-note{margin:0;color:var(--secondary);font-size:14px;line-height:1.7}
+.room-age{font-size:12px;color:var(--secondary)}
+.occupancy{display:grid;gap:12px;justify-items:end;min-width:96px}
+.occupancy-number{font:800 36px/1.1 "Baloo 2",system-ui,sans-serif;font-variant-numeric:tabular-nums;white-space:nowrap}
+.occupancy-max{margin-left:4px;font:500 15px/1.2 ui-monospace,monospace;color:var(--secondary)}
+.occupancy-meter{display:block;width:80px;height:6px;appearance:none;border:none;border-radius:100px;background:var(--sunk)}
+.occupancy-meter::-webkit-meter-bar{height:6px;border:none;border-radius:100px;background:var(--sunk)}
+.occupancy-meter::-webkit-meter-optimum-value{border-radius:100px;background:var(--butter)}
+.occupancy-meter::-moz-meter-bar{border-radius:100px;background:var(--butter)}
+.home .board .section-note{margin-top:16px;max-width:none}
+.home .board .board-updated{margin:0 0 24px;color:var(--secondary);font-size:12px}
+.section-note a{color:var(--ink);font-weight:600}
+.board .refresh{display:grid;place-items:center;flex:none;width:44px;height:44px;padding:0;border:1px solid var(--line);border-radius:50%;background:var(--surface);color:var(--secondary);cursor:pointer}
+.board .refresh:hover{background:var(--sunk);color:var(--ink)}
+.board .refresh:active{transform:translateY(1px)}
+.board .refresh:focus-visible{outline:3px solid var(--butter);outline-offset:4px}
+.board .refresh:disabled{opacity:.55;cursor:progress}
+.board .refresh.is-refreshing svg{animation:refresh-spin 650ms linear infinite}
+@keyframes refresh-spin{to{transform:rotate(360deg)}}
+@media(prefers-reduced-motion:reduce){.board .refresh.is-refreshing svg{animation:none}}
+.board-empty{padding:32px;border:1px solid var(--line);border-radius:var(--board-radius);background:var(--surface);color:var(--secondary);margin:0;line-height:1.8}
+.board-loading{background:var(--sunk)}
+@media(max-width:640px){
+ .top .in{flex-wrap:wrap;row-gap:16px}
+ .board{padding:40px 0}
+ .board-head{gap:24px;padding-bottom:24px;margin-bottom:24px}
+ .totals{width:100%;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+ .stat{grid-template-columns:1fr;padding:12px;row-gap:4px}
+ .stat-icon{grid-row:auto;width:32px;height:32px;border-radius:10px}
+ .stat-icon svg{width:18px;height:18px}
+ .totals dd{font-size:22px}
+ .home .board .game-name{font-size:18px}
+ .games{gap:32px}
+ .room{padding:20px;gap:16px}
+ .room-body{gap:12px}
+ .room-meta{gap:8px}
+ .occupancy{min-width:64px}
+ .occupancy-number{font-size:32px}
+ .occupancy-meter{width:56px}
+ .person-name{font-size:15px}
+ .board-empty{padding:24px}
+}
+
+.board-links{margin-top:20px}
+.chip,.wm{white-space:nowrap}
+/* Outline the logo silhouette in dark themes without changing the SVG. */
+:root{--potluck-logo-edge:#fff;--potluck-logo-outline:drop-shadow(1px 0 0 var(--potluck-logo-edge)) drop-shadow(-1px 0 0 var(--potluck-logo-edge)) drop-shadow(0 1px 0 var(--potluck-logo-edge)) drop-shadow(0 -1px 0 var(--potluck-logo-edge))}
+:root[data-theme="dark"] .brand-chime .butter{filter:var(--potluck-logo-outline)}
+@media(prefers-color-scheme:dark){:root[data-theme="auto"] .brand-chime .butter{filter:var(--potluck-logo-outline)}}
+.hero{max-width:1120px;margin:32px auto 0;padding:28px 32px;border:1px solid var(--line);border-radius:var(--board-radius);background:var(--surface);display:grid;grid-template-columns:1fr auto;column-gap:32px;align-items:center}
+.hero>:not(.btns){grid-column:1}
+.hero .btns{grid-column:2;grid-row:1/span 4}
+.hero-tags{display:flex;flex-wrap:wrap;gap:8px;margin:14px 0 0;padding:0;list-style:none}
+.hero-tags li{display:inline-flex;align-items:center;gap:6px;padding:5px 12px;border:1px solid var(--line);border-radius:999px;background:var(--sunk);color:var(--secondary);font-size:12px;font-weight:600}
+.btn[data-l]{display:none}
+:root[data-lang="ko"] .btn[data-l="ko"],:root[data-lang="en"] .btn[data-l="en"],:root:not([data-lang]) .btn[data-l="en"]{display:inline-flex}
+.home .hero h1{font-size:clamp(26px,2.6vw,34px);line-height:1.3;letter-spacing:-.035em}
+.home .hero h1 br{display:none}
+.home .hero .eyebrow{margin-bottom:12px}
+.home .hero .intro-desc{max-width:560px;margin:10px 0 0;font-size:15px;line-height:1.7}
+.guides{max-width:1120px;margin-inline:auto;padding:24px 0 72px;border-top:1px solid var(--line)}
+.home .guides h2{margin-bottom:20px;font-size:clamp(22px,2.2vw,26px)}
+.guide-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:16px}
+.guide{position:relative;display:grid;gap:8px;align-content:start;padding:20px;border:1px solid var(--line);border-radius:var(--board-radius);background:var(--surface);color:var(--ink);text-decoration:none;transition:border-color .15s,background .15s}
+.guide:hover{border-color:var(--secondary);background:var(--sunk)}
+.guide:focus-visible{outline:3px solid var(--butter);outline-offset:2px}
+.guide strong{font-size:15px}
+.guide span{font-size:13px;line-height:1.6;color:var(--secondary)}
+.btns .btn svg{flex:none}
+@media(max-width:760px){.hero{grid-template-columns:1fr}.hero>:not(.btns),.hero .btns{grid-column:1}.hero .btns{grid-row:auto;margin-top:20px}}
+@media(max-width:640px){.hero{margin-top:20px;padding:20px}.home .hero h1{font-size:24px}.home .hero .intro-desc{font-size:14px}.guides{padding:16px 0 48px}}
+.guide[data-l]{display:none}
+:root[data-lang="ko"] .guide[data-l="ko"],:root[data-lang="en"] .guide[data-l="en"],:root:not([data-lang]) .guide[data-l="en"]{display:grid}
+.guide-icon{display:grid;place-items:center;width:40px;height:40px;margin-bottom:6px;border-radius:12px;background:var(--sunk);color:var(--secondary);transition:background .15s,color .15s}
+.guide-icon svg{width:22px;height:22px}
+.guide:hover .guide-icon{background:var(--butter);color:var(--butter-ink)}
+.guide-go{position:absolute;top:20px;right:20px;color:var(--secondary);opacity:.5;transition:transform .15s,opacity .15s}
+.guide:hover .guide-go{opacity:1;transform:translateX(3px)}
+footer nav a{display:inline-flex;align-items:center;gap:6px}
+footer nav a svg.i{width:16px;height:16px}
+@media(prefers-reduced-motion:reduce){.guide-go,.guide-icon{transition:none}.guide:hover .guide-go{transform:none}}
+@media(max-width:640px){.guide{grid-template-columns:40px 1fr;column-gap:14px;row-gap:2px;padding:16px 44px 16px 16px}.guide-icon{grid-row:1/3;margin:0}.guide strong,.guide>span:not([class]){grid-column:2}.guide-go{top:50%;right:16px;margin-top:-9px}}
+/* Header lines up with the 1120px content column. */
+.home .top .in{max-width:calc(1120px + 96px)}

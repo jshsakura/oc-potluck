@@ -1,0 +1,69 @@
+---
+title: "Configuration reference"
+description: "Active keys, defaults, units and when settings take effect."
+---
+
+## File and defaults
+
+Edit `atmosphere/contents/4200000000504C4B/config.ini` on the SD card. Back it up first and **reboot after manual edits**. Missing settings use defaults. The old `config/ryu_ldn_nx/config.ini` is a migration path, not the active editing location.
+
+```ini
+[server]
+host =
+port = 30456
+
+[network]
+connect_timeout = 5000
+reconnect_delay = 3000
+max_reconnect_attempts = 5
+
+[ldn]
+mode = remote
+passphrase =
+disable_p2p = 1
+
+[debug]
+enabled = 0
+level = 1
+```
+
+## Server and networking
+
+| Key | Default / units | Meaning |
+| --- | --- | --- |
+| `server.host` | empty | Hostname or IPv4 (up to 128 characters in the INI). No URL scheme, path or port suffix. Empty means effective local mode |
+| `server.port` | `30456` / TCP | 1–65535. Match the relay's host-published port |
+| `network.connect_timeout` | `5000` / ms | Connection attempt timeout. Increase only for a confirmed slow connection |
+| `network.reconnect_delay` | `3000` / ms | Configured reconnect delay; leave default unless diagnosing recovery |
+| `network.max_reconnect_attempts` | `5` / attempts | `0` disables auto-reconnect, not unlimited retries |
+
+On the NAS LAN, use its LAN IP; outside, use a reachable public IP/DDNS name. Never use `redis`, Docker-only addresses or this website URL. The client has **no active TLS support**; relay transport is plain TCP.
+
+## Mode, channel, P2P
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `ldn.mode` | `remote` | `remote`, `local`, `off`. Remote with an empty host acts as local |
+| `ldn.passphrase` | empty | UI: 8 hex digits. INI: `Ryujinx-` plus 8 lowercase hex digits, e.g. `Ryujinx-a1b2c3d4` |
+| `ldn.disable_p2p` | `1` | `1` relay only; `0` allow optional direct P2P. Start relay-only |
+
+The channel filters room discovery; it is not encryption or strong authentication. Match it on all peers. P2P depends on peer network/NAT reachability and is not needed for initial setup. Use `0`/`1` for boolean keys.
+
+## Debug
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `debug.enabled` | `0` | Off (`0`) or on (`1`). File logging follows this switch |
+| `debug.level` | `1` | `0` errors, `1` warnings, `2` information, `3` verbose |
+
+Use level 2 briefly to reproduce a problem. Verbose logging adds SD writes and work during play. Logs are in `config/potluck/potluck.log`. Disable debug afterward. Installer debug controls apply live and persist.
+
+## Application timing
+
+Overlay settings save automatically. Remote/local mode needs a **fully restarted game**; Off and enabling a module that booted off follow the reboot notice. P2P applies next room. Leave the room before channel/reconnect changes. Reboot after installer server/P2P edits or manual INI edits.
+
+## Ineffective legacy options
+
+Do not tune `server.use_tls`, `network.ping_interval`, `ldn.interface`, `ldn.enabled` or `[perf]`: these are not active controls in the current runtime. Legacy `debug.log_to_file` is not independent; file logging follows `debug.enabled`.
+
+Source of truth: [config_text.cpp](https://github.com/jshsakura/oc-potluck/blob/main/sysmodule/source/config/config_text.cpp) and [config.cpp](https://github.com/jshsakura/oc-potluck/blob/main/sysmodule/source/config/config.cpp).

@@ -1,0 +1,236 @@
+---
+title: IPC Commands
+description: Reference for potluck IPC commands
+---
+
+
+This page documents the IPC commands used by potluck.
+
+## Standard LDN Commands
+
+These are the standard LDN IPC commands that potluck intercepts:
+
+### Service: ldn:u
+
+| Cmd | Name | Description |
+|-----|------|-------------|
+| 0 | CreateUserLocalCommunicationService | Creates a communication session |
+| 1 | *CreateClientProcessMonitor* | Internal monitor (not MITMed) |
+
+### ICommunicationInterface
+
+| Cmd | Name | Description |
+|-----|------|-------------|
+| 0 | GetState | Get current LDN state |
+| 1 | GetNetworkInfo | Get current network information |
+| 2 | GetIpv4Address | Get local IPv4 address (wire format: big-endian uint32) |
+| 3 | GetDisconnectReason | Get reason for last disconnect |
+| 4 | GetSecurityParameter | Get security configuration |
+| 5 | GetNetworkConfig | Get network configuration |
+| 100 | AttachStateChangeEvent | Get event handle for state changes |
+| 101 | GetNetworkInfoLatestUpdate | Get network info with update counter |
+| 102 | Scan | Scan for available networks |
+| 103 | ScanPrivate | Scan for private networks |
+| 104 | SetWirelessControllerRestriction | Restrict wireless controllers |
+| 200 | OpenAccessPoint | Open as network host |
+| 201 | CloseAccessPoint | Close host mode |
+| 202 | CreateNetwork | Create a new network |
+| 203 | CreateNetworkPrivate | Create private network |
+| 204 | DestroyNetwork | Destroy current network |
+| 205 | Reject | Reject a connected player |
+| 206 | SetAdvertiseData | Set advertisement data |
+| 207 | SetStationAcceptPolicy | Set join policy (allow/reject) |
+| 208 | AddAcceptFilterEntry | Add entry to accept filter |
+| 209 | ClearAcceptFilter | Clear accept filter |
+| 300 | OpenStation | Open as client |
+| 301 | CloseStation | Close client mode |
+| 302 | Connect | Connect to a network |
+| 303 | ConnectPrivate | Connect to private network |
+| 304 | Disconnect | Disconnect from network |
+| 400 | Initialize | Initialize the service |
+| 401 | Finalize | Finalize the service |
+| 402 | InitializeSystem2 | Alternate initialization |
+
+**PIA note**: After `CreateNetwork`/`Connect`, games call `GetIpv4Address()` and `GetNetworkInfo()` separately. The game then matches the IP against `NetworkInfo.ldn.nodes[].ipv4_address` to find its own node index. If these mismatch, `FindLocalNodeId()` returns `0xFF` (not found) and the game destroys the network.
+
+## Custom Config Commands (potluck)
+
+The standalone `potluck` IPC service is available directly via `smGetService("potluck")`. The overlay uses this service for live configuration and status display.
+
+> **Note**: `GetConnectionStatus` (cmd 1) in the standalone `potluck` service currently always returns `0` (Disconnected). For actual connection status, use `GetLdnState` (cmd 24) which returns the `CommState` enum.
+
+### Configuration Commands (0–22)
+
+| Cmd | Name | Parameters | Returns | Description |
+|-----|------|------------|---------|-------------|
+| 0 | GetVersion | - | char[32] | Sysmodule version string |
+| 1 | GetConnectionStatus | - | u32 | Server connection state (currently always 0) |
+| 2 | GetPassphrase | - | char[64] | Current room passphrase |
+| 3 | SetPassphrase | char[64] | - | Set room passphrase |
+| 4 | GetServerAddress | - | ServerAddress | Configured server address |
+| 5 | SetServerAddress | ServerAddress | - | Change server address |
+| 6 | GetLdnMode | - | u32 | 0 remote, 1 local |
+| 7 | SetLdnMode | u32 | - | Choose remote (0) or local (1) for games started next |
+| 8 | GetUseTls | - | u32 | TLS flag (⚠️ NOT IMPLEMENTED — always plain TCP) |
+| 9 | SetUseTls | u32 | - | Enable/disable TLS (⚠️ has no effect) |
+| 10 | GetDebugEnabled | - | u32 | Debug logging flag |
+| 11 | SetDebugEnabled | u32 | - | Enable/disable debug logging |
+| 12 | GetDebugLevel | - | u32 | Log level (0-3) |
+| 13 | SetDebugLevel | u32 | - | Set log level |
+| 14 | GetLogToFile | - | u32 | File logging flag |
+| 15 | SetLogToFile | u32 | - | Enable/disable file logging |
+| 16 | SaveConfig | - | ConfigResult | Persist config to SD card |
+| 17 | ReloadConfig | - | ConfigResult | Reload config from SD card |
+| 18 | GetConnectTimeout | - | u32 | Connection timeout in ms |
+| 19 | SetConnectTimeout | u32 | - | Set connection timeout in ms |
+| 20 | GetPingInterval | - | u32 | Ping interval in ms (⚠️ parsed but not used — server drives pings) |
+| 21 | SetPingInterval | u32 | - | Set ping interval in ms (⚠️ has no effect) |
+| 22 | IsServiceActive | - | u32 | Service ping (returns 1 if active) |
+
+### Runtime State Commands (23–28)
+
+| Cmd | Name | Parameters | Returns | Description |
+|-----|------|------------|---------|-------------|
+| 23 | IsGameActive | - | u32 | Returns 1 if a game is using LDN |
+| 24 | GetLdnState | - | u32 | Current CommState enum value |
+| 25 | GetSessionInfo | - | SessionInfo | Current session information |
+| 26 | GetLastRtt | - | u32 | Last RTT in milliseconds |
+| 27 | ForceReconnect | - | - | Request MITM reconnection |
+| 28 | GetActiveProcessId | - | u64 | PID of active game |
+
+### P2P Proxy Commands (29–30)
+
+> **Note**: Commands 29–30 are available in the `potluck` service but do not yet have overlay client stubs in `potluck_ipc.c`.
+
+| Cmd | Name | Parameters | Returns | Description |
+|-----|------|------------|---------|-------------|
+| 29 | GetDisableP2p | - | u32 | Returns 1 if P2P proxy is disabled |
+| 30 | SetDisableP2p | u32 | - | Enable/disable P2P proxy (0=enable, 1=disable) |
+
+### MITM Config Commands (65000+)
+
+The LDN MITM service also exposes a `LdnConfigService` via command 65000 on `ldn:u`. This service mirrors the `potluck` commands at offset +65000 and adds extended commands 65011-65030:
+
+| Cmd | Name | Description |
+|-----|------|-------------|
+| 65000 | (get service) | Obtain LdnConfigService instance |
+| 65001 | GetHost | Get server hostname |
+| 65002 | SetHost | Set server hostname |
+| 65003 | GetPort | Get server port |
+| 65004 | SetPort | Set server port |
+| 65005 | GetUseTls | Get TLS setting (⚠️ not implemented — always plain TCP) |
+| 65006 | SetUseTls | Set TLS setting (⚠️ not implemented) |
+| 65007 | GetConnectTimeout | Get connect timeout in ms |
+| 65008 | SetConnectTimeout | Set connect timeout in ms |
+| 65009 | GetPingInterval | Get ping interval in ms (⚠️ parsed but not used) |
+| 65010 | SetPingInterval | Set ping interval in ms (⚠️ has no effect) |
+| 65011 | GetPassphrase | Get room passphrase |
+| 65012 | SetPassphrase | Set room passphrase |
+| 65013 | GetLdnMode | Get the LDN mode |
+| 65014 | SetLdnMode | Set the LDN mode |
+| 65015 | GetUseTls | Get TLS state (same as 65005) |
+| 65016 | SetUseTls | Set TLS state (same as 65006) |
+| 65017 | GetConnectTimeout | Get connect timeout (same as 65007) |
+| 65018 | SetConnectTimeout | Set connect timeout (same as 65008) |
+| 65019 | GetPingInterval | Get ping interval (same as 65009) |
+| 65020 | SetPingInterval | Set ping interval (same as 65010) |
+| 65021 | GetReconnectDelay | Get reconnect delay in ms |
+| 65022 | SetReconnectDelay | Set reconnect delay in ms |
+| 65023 | GetMaxReconnectAttempts | Get max reconnect attempts |
+| 65024 | SetMaxReconnectAttempts | Set max reconnect attempts (0 = disable auto-reconnect) |
+| 65025 | GetDebugLevel | Get debug log level |
+| 65026 | SetDebugLevel | Set debug log level |
+| 65027 | GetLogToFile | Get log-to-file state |
+| 65028 | SetLogToFile | Set log-to-file state |
+| 65029 | SaveConfig | Save current config to file |
+| 65030 | ReloadConfig | Reload config from file |
+
+## Data Structures
+
+### ConnectionStatus (enum u32)
+
+| Value | Name | Description |
+|-------|------|-------------|
+| 0 | Disconnected | Not connected to server |
+| 1 | Connecting | Connection in progress |
+| 2 | Connected | TCP connected, handshake pending |
+| 3 | Ready | Fully connected and operational |
+| 4 | Error | Connection error occurred |
+
+> **Note**: In the standalone `potluck` service, `GetConnectionStatus` always returns `0` (Disconnected). Use `GetLdnState` (cmd 24) for actual status.
+
+### LdnState / CommState (enum u32)
+
+| Value | Name | Description |
+|-------|------|-------------|
+| 0 | None | Not initialized |
+| 1 | Initialized | Service initialized |
+| 2 | AccessPoint | Host mode opened |
+| 3 | AccessPointCreated | Network created |
+| 4 | Station | Client mode opened |
+| 5 | StationConnected | Connected to network |
+| 6 | Error | Error state |
+
+### SessionInfo (struct, 8 bytes)
+
+> **Important**: The overlay `SessionInfo` is only 8 bytes, not 72 bytes as in some SDKs. It does not contain `session_duration_ms` or `game_name`.
+
+| Offset | Type | Name | Description |
+|--------|------|------|-------------|
+| 0x00 | u8 | node_count | Players in session |
+| 0x01 | u8 | max_nodes | Maximum players |
+| 0x02 | u8 | local_node_id | Our node ID |
+| 0x03 | u8 | is_host | 1 if hosting |
+| 0x04 | u8[4] | reserved | Padding |
+
+### ServerAddress (struct, 68 bytes)
+
+| Offset | Type | Name | Description |
+|--------|------|------|-------------|
+| 0x00 | char[64] | host | Server hostname |
+| 0x40 | u16 | port | Server port |
+| 0x42 | u16 | padding | Reserved |
+
+### ConfigResult (enum u32)
+
+| Value | Name | Description |
+|-------|------|-------------|
+| 0 | Success | Operation completed successfully |
+| 1 | FileNotFound | Config file does not exist |
+| 2 | ParseError | Config file has syntax errors |
+| 3 | IoError | File I/O error |
+| 4 | InvalidValue | Config value out of range or invalid |
+
+## Usage Example (C)
+
+```c
+// Connect to potluck service directly
+Service cfgService;
+smGetService(&cfgService, "potluck");
+
+// Get LDN state
+u32 state;
+serviceDispatchOut(&cfgService, 24, &state);
+printf("LDN State: %u\n", state);
+
+// Get session info
+struct {
+    u8 node_count;
+    u8 max_nodes;
+    u8 local_node_id;
+    u8 is_host;
+    u8 reserved[4];
+} session_info;
+serviceDispatchOut(&cfgService, 25, &session_info);
+
+// Force reconnect
+serviceDispatch(&cfgService, 27);
+
+// Check P2P status
+u32 p2p_disabled;
+serviceDispatchOut(&cfgService, 29, &p2p_disabled);
+
+// Save config to SD card
+u32 result;
+serviceDispatchOut(&cfgService, 16, &result);
+```

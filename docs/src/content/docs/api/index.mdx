@@ -1,0 +1,73 @@
+---
+title: API Reference
+description: API documentation for potluck
+---
+
+
+This section contains the API documentation for potluck modules.
+
+## Protocol
+
+Wire format types and encoding/decoding for the LDN relay protocol.
+
+- **[Protocol Reference](/oc-potluck/reference/protocol)** — Packet types, structures, byte order, and signaling semantics
+
+## IPC Services
+
+IPC command interfaces exposed by the sysmodule.
+
+- **[IPC Commands](/oc-potluck/reference/ipc-commands)** — Full reference for `ldn:u` MITM commands, `potluck` config service commands (0–30), and data structures
+
+## Key Source Modules
+
+### Network (`sysmodule/source/network/`)
+
+| Module | Description |
+|--------|-------------|
+| TcpClient | BSD socket wrapper with TCP keepalive and graceful shutdown |
+| Client | High-level the LDN relay protocol client |
+| ConnectionState | State machine: Disconnected → Connecting → Connected → Ready |
+| ReconnectManager | Exponential backoff with fast first retry (200ms) and jitter |
+
+### LDN (`sysmodule/source/ldn/`)
+
+| Module | Description |
+|--------|-------------|
+| ICommunicationService | Main LDN MITM implementation (CreateNetwork, Scan, Connect, etc.) |
+| LdnStateMachine | CommState transitions (None → Initialized → AccessPoint/Station → Created/Connected) |
+| LdnPacketDispatcher | Routes incoming packets to appropriate handlers |
+| LdnSessionHandler | Session lifecycle management |
+| LdnProxyHandler | Proxy data routing via ProxyData/ProxyConfig |
+| LdnSharedState | Shared state between MITM and config service |
+| LdnNodeMapper | Maps between node IDs and IP addresses |
+
+### BSD Proxy (`sysmodule/source/bsd/`)
+
+| Module | Description |
+|--------|-------------|
+| ProxySocket | Intercepted BSD socket (bind/connect/sendto/recvfrom) |
+| ProxySocketManager | Socket registry, port allocation, broadcast fan-out routing |
+| EphemeralPortPool | Dynamic port allocation (49152–65535) |
+
+### P2P (`sysmodule/source/p2p/`)
+
+| Module | Description |
+|--------|-------------|
+| P2pProxyServer | Listens for incoming P2P connections |
+| P2pProxyClient | Connects to peer proxy servers |
+| UpnpPortMapper | UPnP port forward discovery and mapping |
+
+### Config (`sysmodule/source/config/`)
+
+| Module | Description |
+|--------|-------------|
+| ConfigManager | Fixed-buffer INI parser with default-on-failure semantics |
+| ConfigIpcService | potluck IPC service (31 commands, 0–30) |
+
+### Protocol (`sysmodule/source/protocol/`)
+
+| Module | Description |
+|--------|-------------|
+| types.hpp | All wire format structures with `static_assert` size checks |
+| relay_protocol.hpp | Packet encoding/decoding functions |
+| packet_buffer.hpp | TCP stream reassembly and buffering |

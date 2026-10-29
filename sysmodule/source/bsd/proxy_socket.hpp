@@ -1,0 +1,778 @@
+/**
+ * @file proxy_socket.hpp
+ * @brief Proxy Socket for LDN Traffic Routing
+ *
+ * This file defines the ProxySocket class which represents a virtual socket
+ * for LDN network communication. Instead of using real network sockets,
+ * ProxySockets route data through ProxyData packets to the relay server.
+ *
+ * ## Design
+ *
+ * ProxySocket mimics the behavior of a real BSD socket but:
+ * - Sends data by encoding it as ProxyData packets to the server
+ * - Receives data from a local queue populated by incoming ProxyData packets
+ * - Tracks local/remote addresses in the virtual 10.114.x.x network
+ *
+ * ## Data Flow
+ *
+ * ```
+ * Game calls Send() ─────► ProxySocket.Send() ─────► ProxyData packet ─────► Server
+ *
+ * Server ─────► ProxyData packet ─────► ProxySocket.IncomingData() ─────► Queue
+ *                                                                           │
+ * Game calls Recv() ◄───── ProxySocket.Recv() ◄─────────────────────────────┘
+ * ```
+ *
+ * ## Thread Safety
+ *
+ * The receive queue is protected by a mutex. The receive event can be used
+ * to block until data is available (for blocking Recv calls).
+ *
+ * ## Lifecycle
+ *
+ * 1. Create: Socket() creates a new ProxySocket (unbound, unconnected)
+ * 2. Bind: Bind() assigns a local address/port
+ * 3. Connect: Connect() sets the remote address (sends ProxyConnect to server)
+ * 4. Data: Send()/Recv() transfer data via ProxyData packets
+ * 5. Close: Close() cleans up and sends ProxyDisconnect
+ *
+ * @copyright Copyright (c) 2026 potluck contributors
+ * @license GPL-2.0-or-later
+ */
+
+#pragma once
+
+#include <stratosphere.hpp>
+#include <atomic>
+#include <deque>
+#include <unordered_map>
+#include <vector>
+#include "bsd_types.hpp"
+#include "../protocol/types.hpp"
+
+namespace ams::mitm::bsd {
+
+// Forward declaration
+class ProxySocketManager;
+
+/**
+ * @brief Maximum size of the receive queue per socket
+ *
+ * Limits memory usage per socket. If the queue is full, oldest
+ * packets are dropped (UDP behavior).
+ */
+constexpr size_t PROXY_SOCKET_MAX_QUEUE_SIZE = 32;
+
+/**
+ * @brief Maximum payload size for a single ProxyData packet
+ *
+ * MK8DX and other LDN games routinely send packets up to ~1460 bytes
+ * (Ethernet MTU minus IP/UDP headers). 2000 B leaves headroom without
+ * pushing a single proxy data frame past the 2048 B TCP send buffer
+ * (LdnHeader 12 B + ProxyDataHeader 20 B + payload).
+ */
+constexpr size_t PROXY_SOCKET_MAX_PAYLOAD = 2000;
+
+/**
+ * @brief State of a proxy socket
+ */
+enum class ProxySocketState {
+    Created,        ///< Socket created but not bound
+    Bound,          ///< Socket bound to local address
+    Connecting,     ///< TCP: Connect in progress, waiting for reply
+    Connected,      ///< Socket connected to remote (TCP) or has default dest (UDP)
+    Listening,      ///< Socket listening for connections (TCP only)
+    Closed,         ///< Socket closed, awaiting cleanup
+};
+
+/**
+ * @brief Received packet data with source information
+ *
+ * Stores a received ProxyData packet along with the source address
+ * for RecvFrom() calls. Fixed-size payload buffer so the enclosing
+ * ring queue can live inline in ProxySocket with zero heap allocations
+ * per packet — LDN traffic on real Switch cannot afford an alloc+free
+ * cycle per datagram (100+ pkts/s) on top of the internet round-trip.
+ */
+struct ReceivedPacket {
+    potluck::bsd::SockAddrIn from;                   ///< Source address
+    uint16_t len;                                    ///< Payload length (<= PROXY_SOCKET_MAX_PAYLOAD)
+    uint16_t offset;                                 ///< TCP only: bytes already read from data
+    uint8_t data[PROXY_SOCKET_MAX_PAYLOAD];          ///< Payload buffer
+};
+
+/**
+ * @brief Proxy Socket for LDN Network Communication
+ *
+ * This class represents a virtual socket that routes traffic through
+ * the relay server via ProxyData packets instead of using real
+ * network sockets.
+ *
+ * ## Key Features
+ *
+ * - Mimics BSD socket API (bind, connect, send, recv)
+ * - Routes data via ProxyData protocol to server
+ * - Maintains receive queue for incoming data
+ * - Supports both UDP and TCP semantics
+ * - Thread-safe receive queue
+ *
+ * ## Example Usage
+ *
+ * ```cpp
+ * // Create and bind a UDP proxy socket
+ * auto socket = std::make_unique<ProxySocket>(SocketType::Dgram, ProtocolType::Udp);
+ * socket->Bind(local_addr);
+ *
+ * // Send data to a peer
+ * socket->SendTo(data, data_len, remote_addr);
+ *
+ * // Receive data (blocking if no data available)
+ * socket->RecvFrom(buffer, buffer_size, &from_addr);
+ * ```
+ */
+class ProxySocket {
+public:
+    /**
+     * @brief Construct a new proxy socket
+     *
+     * Creates an unbound, unconnected proxy socket of the specified type.
+     *
+     * @param type Socket type (Stream for TCP, Dgram for UDP)
+     * @param protocol Protocol type (Tcp or Udp)
+     * @param owner_pid Game process that owns the socket; blocking waits end when it exits
+     */
+    /// @gdb{tag="BSD:ALIGN", msg="ProxySocket constructed: type=%d protocol=%d", args="$x1, $x2"}
+    ProxySocket(potluck::bsd::SocketType type, potluck::bsd::ProtocolType protocol, u64 owner_pid);
+
+    /**
+     * @brief Destructor
+     *
+     * Cleans up resources. Does NOT send ProxyDisconnect - call Close() first.
+     */
+    /// @gdb{tag="BSD:ALIGN", msg="ProxySocket destroyed"}
+    ~ProxySocket();
+
+    /**
+     * @brief Non-copyable (socket identity is unique)
+     */
+    ProxySocket(const ProxySocket&) = delete;
+    ProxySocket& operator=(const ProxySocket&) = delete;
+
+    /**
+     * @brief Move constructor
+     */
+    ProxySocket(ProxySocket&&) = default;
+    ProxySocket& operator=(ProxySocket&&) = default;
+
+    // =========================================================================
+    // Socket State
+    // =========================================================================
+
+    /**
+     * @brief Get the current socket state
+     * @return Current state (Created, Bound, Connected, etc.)
+     */
+    ProxySocketState GetState() const { return m_state; }
+
+    /**
+     * @brief Get the socket type
+     * @return Socket type (Stream or Dgram)
+     */
+    potluck::bsd::SocketType GetType() const { return m_type; }
+
+    /**
+     * @brief Get the protocol type
+     * @return Protocol type (Tcp or Udp)
+     */
+    potluck::bsd::ProtocolType GetProtocol() const { return m_protocol; }
+
+    /**
+     * @brief Check if socket is non-blocking
+     * @return true if non-blocking mode is enabled
+     */
+    bool IsNonBlocking() const { return m_non_blocking; }
+
+    /**
+     * @brief Set non-blocking mode
+     * @param non_blocking true to enable non-blocking mode
+     */
+    void SetNonBlocking(bool non_blocking) { m_non_blocking = non_blocking; }
+
+    // =========================================================================
+    // Address Management
+    // =========================================================================
+
+    /**
+     * @brief Bind the socket to a local address
+     *
+     * Assigns a local address and port to the socket. If the port is 0,
+     * the caller should allocate an ephemeral port before calling this.
+     *
+     * @param addr Local address to bind to (must be in LDN network 10.114.x.x)
+     * @return Success or error (e.g., already bound, invalid address)
+     *
+     * @note Does not validate that the address is actually ours - caller must check
+     */
+    /// @gdb{tag="BSD:ALIGN", msg="ProxySocket::Bind"}
+    Result Bind(const potluck::bsd::SockAddrIn& addr);
+
+    /**
+     * @brief Connect to a remote address
+     *
+     * For TCP, this initiates a connection to the remote peer.
+     * For UDP, this sets the default destination for Send().
+     *
+     * @param addr Remote address to connect to
+     * @return Success or error
+     *
+     * @note For TCP, this should trigger sending ProxyConnect to the server
+     */
+    /// @gdb{tag="BSD:ALIGN", msg="ProxySocket::Connect"}
+    Result Connect(const potluck::bsd::SockAddrIn& addr);
+
+    /**
+     * @brief Get the local address
+     *
+     * @param out_addr Output: local address
+     * @return Success or error if not bound
+     */
+    Result GetSockName(potluck::bsd::SockAddrIn* out_addr) const;
+
+    /**
+     * @brief Get the remote address (connected sockets only)
+     *
+     * @param out_addr Output: remote address
+     * @return Success or error if not connected
+     */
+    Result GetPeerName(potluck::bsd::SockAddrIn* out_addr) const;
+
+    /**
+     * @brief Get the local address reference
+     * @return Reference to local address structure
+     */
+    const potluck::bsd::SockAddrIn& GetLocalAddr() const { return m_local_addr; }
+
+    /**
+     * @brief Get the remote address reference
+     * @return Reference to remote address structure
+     */
+    const potluck::bsd::SockAddrIn& GetRemoteAddr() const { return m_remote_addr; }
+
+    // =========================================================================
+    // Data Transfer
+    // =========================================================================
+
+    /**
+     * @brief Send data (connected sockets only)
+     *
+     * Sends data to the connected peer. Socket must be connected first.
+     *
+     * @param data Pointer to data to send
+     * @param len Length of data
+     * @param flags Send flags (currently ignored)
+     * @return Bytes sent or negative errno on error
+     */
+    /// @gdb{tag="BSD:DATA", msg="ProxySocket::Send"}
+    s32 Send(const void* data, size_t len, s32 flags);
+
+    /**
+     * @brief Send data to a specific address
+     *
+     * Sends data to the specified destination. Does not require connection.
+     *
+     * @param data Pointer to data to send
+     * @param len Length of data
+     * @param flags Send flags (currently ignored)
+     * @param dest Destination address
+     * @return Bytes sent or negative errno on error
+     */
+    /// @gdb{tag="BSD:ALIGN", msg="ProxySocket::SendTo"}
+    s32 SendTo(const void* data, size_t len, s32 flags, const potluck::bsd::SockAddrIn& dest);
+
+    /**
+     * @brief Receive data (connected sockets only)
+     *
+     * Receives data from the connected peer.
+     *
+     * @param buffer Buffer to receive into
+     * @param len Buffer size
+     * @param flags Receive flags (currently supports MSG_PEEK, MSG_DONTWAIT)
+     * @return Bytes received, 0 if connection closed, or negative errno on error
+     */
+    /// @gdb{tag="BSD:DATA", msg="ProxySocket::Recv"}
+    s32 Recv(void* buffer, size_t len, s32 flags);
+
+    /**
+     * @brief Receive data with source address
+     *
+     * Receives data and returns the source address.
+     *
+     * @param buffer Buffer to receive into
+     * @param len Buffer size
+     * @param flags Receive flags
+     * @param from Output: source address (can be nullptr)
+     * @return Bytes received, 0 if connection closed, or negative errno on error
+     */
+    /// @gdb{tag="BSD:DATA", msg="ProxySocket::RecvFrom"}
+    s32 RecvFrom(void* buffer, size_t len, s32 flags, potluck::bsd::SockAddrIn* from);
+
+    /**
+     * @brief Queue incoming data from a ProxyData packet
+     *
+     * Called by the ProxySocketManager when a ProxyData packet arrives
+     * that matches this socket.
+     *
+     * @param data Packet payload
+     * @param len Payload length
+     * @param from Source address
+     *
+     * @note Thread-safe. Signals the receive event.
+     */
+    /// @gdb{tag="BSD:DATA", msg="ProxySocket::IncomingData"}
+    void IncomingData(const void* data, size_t len, const potluck::bsd::SockAddrIn& from);
+
+    // =========================================================================
+    // Socket Options
+    // =========================================================================
+
+    /**
+     * @brief Set a socket option
+     *
+     * Most options are stored locally and don't affect real network behavior
+     * since we're proxying through the server.
+     *
+     * @param level Option level (SOL_SOCKET, etc.)
+     * @param optname Option name
+     * @param optval Option value
+     * @param optlen Option value length
+     * @return Success or error
+     */
+    /// @gdb{tag="BSD:CONFIG", msg="ProxySocket::SetSockOpt"}
+    Result SetSockOpt(s32 level, s32 optname, const void* optval, size_t optlen);
+
+    /**
+     * @brief Get a socket option
+     *
+     * @param level Option level
+     * @param optname Option name
+     * @param optval Output: option value
+     * @param optlen Input/Output: option value length
+     * @return Success or error
+     */
+    /// @gdb{tag="BSD:CONFIG", msg="ProxySocket::GetSockOpt"}
+    Result GetSockOpt(s32 level, s32 optname, void* optval, size_t* optlen) const;
+
+    // =========================================================================
+    // TCP-specific Operations
+    // =========================================================================
+
+    /**
+     * @brief Start listening for connections (TCP only)
+     *
+     * @param backlog Maximum pending connections (currently ignored)
+     * @return Success or error if not TCP or not bound
+     */
+    /// @gdb{tag="BSD:CONNECT", msg="ProxySocket::Listen"}
+    Result Listen(s32 backlog);
+
+    /**
+     * @brief Wait until a connection is queued for accept (TCP only)
+     *
+     * Blocks until one is available (unless non-blocking). The connection
+     * stays queued; ProxySocketManager::AdoptFromListener takes it.
+     *
+     * @param out_errno 0, or EAGAIN / EBADF / EINVAL / ECONNABORTED
+     * @return true if a connection is queued
+     */
+    /// @gdb{tag="BSD:CONNECT", msg="ProxySocket::Accept"}
+    bool WaitForConnection(s32* out_errno);
+
+    /**
+     * @brief Take the oldest queued connection; ProxySocketManager calls this
+     *        under its lock so the socket is registered in the same step
+     */
+    std::unique_ptr<ProxySocket> PopAccepted();
+
+    /**
+     * @brief Deliver a segment (or a disconnect) to a connection that is
+     *        queued but not yet accepted
+     *
+     * The peer may send as soon as its connect completes, before this game
+     * calls accept(); dropping those bytes would corrupt the stream.
+     *
+     * @return true if a queued connection matched
+     */
+    bool RouteToQueued(uint32_t remote_ip, uint16_t remote_port, uint16_t local_port,
+                       const void* data, size_t len, bool disconnect);
+
+    /**
+     * @brief Whether closing this socket releases its port (accepted ones share the listener's)
+     */
+    bool OwnsPort() const { return m_owns_port; }
+
+    /**
+     * @brief Queue an incoming connection request (TCP listen socket)
+     *
+     * Called by ProxySocketManager, under its lock, when a ProxyConnect
+     * packet arrives for this listening socket. Does not send anything; the
+     * manager sends the ProxyConnectReply after releasing its lock.
+     *
+     * @param request The connection request info
+     * @return true if a connected socket was queued for Accept()
+     */
+    /// @gdb{tag="BSD:DATA", msg="ProxySocket::IncomingConnection"}
+    bool IncomingConnection(const potluck::protocol::ProxyConnectRequest& request);
+
+    /**
+     * @brief Handle connect response (for TCP connect handshake)
+     *
+     * Called by ProxySocketManager when ProxyConnectReply arrives.
+     *
+     * @param response The connect response
+     */
+    /// @gdb{tag="BSD:DATA", msg="ProxySocket::HandleConnectResponse"}
+    void HandleConnectResponse(const potluck::protocol::ProxyConnectResponse& response);
+
+    /**
+     * @brief The peer closed its end (ProxyDisconnect); reads then return EOF
+     */
+    void HandlePeerDisconnect();
+
+    /**
+     * @brief The peer refused our connect (ProxyDisconnect while connecting)
+     */
+    void HandleConnectRefused();
+
+    /**
+     * @brief Whether a TCP segment from remote_ip:remote_port to local_port belongs here
+     */
+    bool MatchesStream(uint32_t remote_ip, uint16_t remote_port, uint16_t local_port) const;
+
+    /**
+     * @brief Our LDN IP in wire format, whichever way Bind stored it
+     */
+    uint32_t LocalWireIp() const;
+
+    /**
+     * @brief Peer LDN IP in wire format; m_remote_addr is network order
+     */
+    uint32_t RemoteWireIp() const { return m_remote_addr.GetAddr(); }
+
+    /**
+     * @brief poll/select readiness
+     */
+    bool IsReadable() const;
+    bool IsWritable() const;
+    bool HasError() const;
+
+    /**
+     * @brief Check if accept queue has pending connections
+     * @return true if there are pending connections
+     */
+    bool HasPendingConnections() const;
+
+    /**
+     * @brief Get broadcast flag
+     * @return true if SO_BROADCAST is enabled
+     */
+    bool IsBroadcastEnabled() const { return m_broadcast; }
+
+    /**
+     * @brief Set broadcast flag (SO_BROADCAST)
+     * @param enabled true to enable broadcast reception
+     */
+    void SetBroadcastEnabled(bool enabled) { m_broadcast = enabled; }
+
+    /**
+     * @brief Set broadcast address for filtering
+     * @param addr Broadcast address (e.g., 10.114.255.255)
+     */
+    void SetBroadcastAddress(uint32_t addr) { m_broadcast_address = addr; }
+
+    // =========================================================================
+    // Shutdown and Close
+    // =========================================================================
+
+    /**
+     * @brief Shutdown the socket
+     *
+     * @param how How to shutdown (read, write, or both)
+     * @return Success or error
+     */
+    /// @gdb{tag="BSD:CONNECT", msg="ProxySocket::Shutdown"}
+    Result Shutdown(potluck::bsd::ShutdownHow how);
+
+    /**
+     * @brief Close the socket
+     *
+     * Marks the socket as closed and releases resources.
+     * For TCP, this may send ProxyDisconnect to the server.
+     *
+     * @return Success or error
+     */
+    /// @gdb{tag="BSD:SOCKET", msg="ProxySocket::Close"}
+    Result Close();
+
+    // =========================================================================
+    // Event Handling
+    // =========================================================================
+
+    /**
+     * @brief Check if data is available to read
+     * @return true if receive queue is not empty
+     */
+    bool HasPendingData() const;
+
+    /**
+     * @brief Get the number of bytes available to read
+     * @return Total bytes in receive queue
+     */
+    size_t GetPendingDataSize() const;
+
+    /**
+     * @brief Pin the socket for an IPC handler; see ProxySocketRef
+     */
+    void Retain() { m_users.fetch_add(1); }
+    void Release() { m_users.fetch_sub(1); }
+
+    /**
+     * @brief Return once no IPC handler holds a ProxySocketRef to this socket
+     *
+     * Call after Close() and before destroying the socket, so a handler woken
+     * by Close() never touches freed memory.
+     *
+     * @return Milliseconds spent waiting, for the teardown log
+     */
+    u64 WaitUntilIdle() const;
+
+    /**
+     * @brief Get the receive event handle
+     *
+     * Can be used with poll/select to wait for data.
+     *
+     * @return Reference to the receive event
+     */
+    os::Event& GetReceiveEvent() { return m_receive_event; }
+
+private:
+    /**
+     * @brief Wait for an event in short slices, giving up when the socket closes
+     *
+     * The MITM has only two IPC threads shared by ldn:u and bsd:u. An unbounded
+     * wait here kept a thread forever when the game quit mid-recv, which stalled
+     * the game's exit and every later socket call.
+     *
+     * The wait also ends when the owning game process exits, so a game killed
+     * mid-recv never keeps an IPC thread.
+     *
+     * @param limit_ms 0 waits until signaled, closed or the owner exits
+     * @return true if the event was signaled
+     */
+    bool BlockOn(os::Event& event, u64 limit_ms);
+
+    /**
+     * @brief Game process that owns this socket (0 = unknown)
+     */
+    u64 m_owner_pid;
+
+    /**
+     * @brief Pending connections a listener holds before refusing more
+     *
+     * Every socket owns a 64 KB receive ring, so this stays small.
+     */
+    static constexpr size_t MaxAcceptBacklog = 4;
+    size_t m_backlog{1};
+
+    /**
+     * @brief Socket type (Stream or Dgram)
+     */
+    potluck::bsd::SocketType m_type;
+
+    /**
+     * @brief Protocol type (Tcp or Udp)
+     */
+    potluck::bsd::ProtocolType m_protocol;
+
+    /**
+     * @brief Current socket state
+     */
+    mutable ProxySocketState m_state{ProxySocketState::Created};
+
+    /**
+     * @brief Non-blocking mode flag
+     */
+    bool m_non_blocking{false};
+
+    /**
+     * @brief Shutdown flags
+     */
+    bool m_shutdown_read{false};
+    bool m_shutdown_write{false};
+
+    /**
+     * @brief TCP: the peer sent ProxyDisconnect; reads drain the queue then return EOF
+     */
+    bool m_peer_closed{false};
+
+    /**
+     * @brief Pending error reported once through SO_ERROR (non-blocking connect)
+     */
+    mutable s32 m_socket_error{0};
+
+    /**
+     * @brief When a TCP connect started, for the non-blocking connect deadline
+     */
+    u64 m_connect_started_tick{0};
+
+    /**
+     * @brief False for accepted sockets: the listener owns the port reservation
+     */
+    bool m_owns_port{true};
+
+    /// Turn a Connecting socket that waited past the deadline into ETIMEDOUT; caller holds m_queue_mutex
+    void ExpireConnectLocked() const;
+
+    /**
+     * @brief Local address (set by Bind)
+     */
+    potluck::bsd::SockAddrIn m_local_addr{};
+
+    /**
+     * @brief Remote address (set by Connect)
+     */
+    potluck::bsd::SockAddrIn m_remote_addr{};
+
+    /**
+     * @brief Receive queue mutex
+     */
+    mutable os::Mutex m_queue_mutex{false};
+
+    /**
+     * @brief Receive queue (incoming packets) — fixed-size ring buffer.
+     * Producer: network thread via IncomingData. Consumer: game thread via
+     * RecvFrom. Full = drop oldest (UDP behavior). Protected by m_queue_mutex.
+     */
+    ReceivedPacket m_rx_ring[PROXY_SOCKET_MAX_QUEUE_SIZE];
+    size_t m_rx_head = 0;                            ///< Read index
+    size_t m_rx_tail = 0;                            ///< Write index
+    size_t m_rx_count = 0;                           ///< Elements in ring
+
+    /**
+     * @brief Event signaled when data is available
+     */
+    os::Event m_receive_event{os::EventClearMode_ManualClear};
+
+    /**
+     * @brief TCP accept queue (pending connections)
+     */
+    std::deque<std::unique_ptr<ProxySocket>> m_accept_queue;
+
+    /**
+     * @brief Event signaled when accept queue has connections
+     */
+    os::Event m_accept_event{os::EventClearMode_ManualClear};
+
+    /**
+     * @brief Live ProxySocketRef handles; the socket is freed only at zero
+     */
+    std::atomic<u32> m_users{0};
+
+    /**
+     * @brief TCP connect response received flag
+     */
+    bool m_connect_response_received{false};
+
+    /**
+     * @brief TCP connect response data (valid when m_connect_response_received is true)
+     */
+    potluck::protocol::ProxyConnectResponse m_connect_response{};
+
+    /**
+     * @brief Event signaled when connect response is received
+     */
+    os::Event m_connect_event{os::EventClearMode_ManualClear};
+
+    /**
+     * @brief Broadcast flag (SO_BROADCAST)
+     *
+     * When false, incoming broadcast packets are filtered out.
+     * When true, broadcast packets are accepted.
+     */
+    bool m_broadcast{false};
+
+    /**
+     * @brief Broadcast address for filtering
+     *
+     * Calculated as: local_ip | ~subnet_mask (e.g., 10.114.255.255)
+     */
+    uint32_t m_broadcast_address{0};
+
+    /**
+     * @brief Socket options storage
+     *
+     * Most options are stored locally since we're proxying.
+     * Format: map of (level << 16 | optname) -> value
+     * Currently stores integer options only (most common case).
+     */
+    std::unordered_map<uint32_t, s32> m_socket_options;
+
+    /**
+     * @brief Helper to get option key from level and optname
+     */
+    static constexpr uint32_t MakeOptionKey(s32 level, s32 optname) {
+        return (static_cast<uint32_t>(level) << 16) | static_cast<uint32_t>(optname & 0xFFFF);
+    }
+};
+
+/**
+ * @brief Keeps a ProxySocket alive while an IPC handler uses it
+ *
+ * ProxySocketManager hands these out instead of raw pointers. Close paths
+ * remove the socket from the registry, wake it, then wait until every ref is
+ * gone before freeing it, so a handler on the other IPC thread can never use
+ * freed memory. A handler must not close the socket it holds a ref to.
+ */
+class ProxySocketRef {
+public:
+    ProxySocketRef() = default;
+    ProxySocketRef(std::nullptr_t) {}
+
+    /// Adopts a socket the caller already retained
+    static ProxySocketRef Adopt(ProxySocket* socket) { return ProxySocketRef(socket); }
+
+    ProxySocketRef(const ProxySocketRef&) = delete;
+    ProxySocketRef& operator=(const ProxySocketRef&) = delete;
+
+    ProxySocketRef(ProxySocketRef&& other) noexcept : m_socket(other.m_socket) { other.m_socket = nullptr; }
+    ProxySocketRef& operator=(ProxySocketRef&& other) noexcept {
+        if (this != &other) {
+            Reset();
+            m_socket = other.m_socket;
+            other.m_socket = nullptr;
+        }
+        return *this;
+    }
+
+    ~ProxySocketRef() { Reset(); }
+
+    void Reset() {
+        if (m_socket != nullptr) {
+            m_socket->Release();
+            m_socket = nullptr;
+        }
+    }
+
+    ProxySocket* get() const { return m_socket; }
+    ProxySocket* operator->() const { return m_socket; }
+    ProxySocket& operator*() const { return *m_socket; }
+    explicit operator bool() const { return m_socket != nullptr; }
+    bool operator==(std::nullptr_t) const { return m_socket == nullptr; }
+    bool operator!=(std::nullptr_t) const { return m_socket != nullptr; }
+
+private:
+    explicit ProxySocketRef(ProxySocket* socket) : m_socket(socket) {}
+
+    ProxySocket* m_socket = nullptr;
+};
+
+} // namespace ams::mitm::bsd

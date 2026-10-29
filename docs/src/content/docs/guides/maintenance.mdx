@@ -1,0 +1,29 @@
+---
+title: "Update, remove and recover"
+description: "Preserve settings and recover interrupted installs or boot failures."
+---
+
+## Update
+
+Close the game. Use the installer update action or replace module and overlay together from one release ZIP, then reboot. Back up `atmosphere/contents/4200000000504C4B/config.ini` before manual updates. Do not mix releases.
+
+The installer stages and verifies files before replacement. If interrupted, reopen it and follow its recovery result before another install. Keep `config/potluck_installer/` intact while recovery is pending.
+
+## Uninstall with the app
+
+Close the game and select removal in the installer. Choose whether to keep settings or remove them too; reboot afterward. If installation recorded disabling ldn_mitm, removal can restore its autostart. Check that only one LDN module is enabled.
+
+## Manual removal
+
+1. Shut down and access the SD card. Back up `atmosphere/contents/4200000000504C4B/config.ini` if needed.
+2. Remove `atmosphere/contents/4200000000504C4B/` and `switch/.overlays/potluck.ovl`.
+3. Optionally remove `switch/potluck-installer.nro` and `config/potluck/` logs. Remove installer state only when no recovery is pending.
+4. To return to ldn_mitm, restore its original `flags/boot2.flag` only after disabling/removing PotLuck. Manual deletion does not replay installer restoration records.
+
+Deleting the module directory also deletes its settings. To disable temporarily and retain files, remove only PotLuck's `flags/boot2.flag` and reboot.
+
+## Boot failure
+
+Power off and remove `atmosphere/contents/4200000000504C4B/flags/boot2.flag` from the SD card. Check for a second enabled LDN module. Boot again before reinstalling a consistent release. Preserve Atmosphere crash reports and recent PotLuck logs for diagnosis; keep unrelated Atmosphere content.
+
+Relay updates and volume preservation: [server operations](../relay-server/) and [NAS guide](../synology/).

@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <DefineConstants Condition=" '$(ExtraDefineConstants)' != '' ">$(DefineConstants);$(ExtraDefineConstants)</DefineConstants>
+    <PublishAot>true</PublishAot>
+    <OptimizationPreference>Speed</OptimizationPreference>
+    <!-- One small heap and no background GC thread: the relay holds little and
+         keeps nearly everything short-lived. -->
+    <ServerGarbageCollection>false</ServerGarbageCollection>
+    <ConcurrentGarbageCollection>false</ConcurrentGarbageCollection>
+    <JsonSerializerIsReflectionEnabledByDefault>true</JsonSerializerIsReflectionEnabledByDefault>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="NetCoreServer" Version="8.0.7" />
+    <PackageReference Include="NRedisStack" Version="0.11.0" />
+  </ItemGroup>
+  
+  <ItemGroup>
+    <Content Include="Utils/gamelist.json">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+      <TargetPath>gamelist.json</TargetPath>      
+    </Content>
+  </ItemGroup>
+
+</Project>

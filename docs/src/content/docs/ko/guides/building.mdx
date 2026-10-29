@@ -1,0 +1,37 @@
+---
+title: "소스에서 빌드"
+description: "Docker 빌더와 메모리 제한이 있는 테스트를 사용합니다."
+---
+
+## 기기 구성 요소 빌드
+
+devkitPro·Atmosphere·오버레이 의존성이 맞춰진 Docker 빌더를 사용하세요. 기기 대상을 호스트 컴파일러로 빌드하지 않습니다.
+
+```sh
+git clone --recursive https://github.com/jshsakura/oc-potluck.git
+cd oc-potluck
+docker compose run --rm build
+```
+
+모듈·오버레이·SD 구조는 `output/`에 생성됩니다. 설치 앱은 [installer/BUILD.md](https://github.com/jshsakura/oc-potluck/blob/main/installer/BUILD.md)의 별도 빌드를 따릅니다. 정확한 패키징은 현재 Makefile·릴리스 워크플로가 기준입니다. 일반 사용자는 릴리스 파일을 설치하세요.
+
+## 테스트와 자원 제한
+
+저장소의 test 서비스는 컨테이너 메모리 4 GiB·추가 스왑 없이 직렬로 실행합니다.
+
+```sh
+docker compose run --rm test
+```
+
+실행 전 전체 자식 프로세스까지 제한하는지 확인하세요. 공유 합계 4 GiB 밖에서 병렬 테스트를 실행하지 않습니다. 이 머신의 직접 호스트 테스트에는 실제 공유 cgroup 상한을 확인하는 `scripts/ci/run-limited.sh`를 사용하세요. 프로세스별 가상 메모리 제한으로 대체하지 마세요.
+
+단위 테스트로 기기 실기 호환성을 보장할 수 없습니다. 실기에서는 방 생성·참가, 게임 통신, 재연결, 연결 해제, 게임 종료까지 확인하세요. 디버거 안내는 [scripts/debugger](https://github.com/jshsakura/oc-potluck/tree/main/scripts/debugger)에 있습니다.
+
+## 문서 사이트 빌드
+
+```sh
+npm ci --prefix docs
+bash scripts/ci/run-limited.sh npm run build --prefix docs
+```
+
+한영 검색 인덱스와 같은 체크아웃의 Compose 다운로드를 포함합니다. 사용자 문서 빌드에는 Doxygen이 필요 없습니다. 선택적인 API 생성은 [docs/README.md](https://github.com/jshsakura/oc-potluck/blob/main/docs/README.md)를 따릅니다.

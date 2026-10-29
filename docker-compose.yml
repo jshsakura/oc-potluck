@@ -1,0 +1,79 @@
+services:
+  # Build everything + package into output/ and ZIP
+  # Usage: docker compose run --rm build
+  #
+  # Uses the pinned GHCR builder image (amd64 and arm64, so ARM hosts build
+  # natively) with pre-built libstratosphere.a and all devkitPro packages.
+  build:
+    image: ghcr.io/jshsakura/oc-potluck:latest
+    volumes:
+      - .:/workspace
+    working_dir: /workspace
+    entrypoint: ["/bin/bash", "/workspace/scripts/ci/container-tasks.sh", "build"]
+
+  # Clean all build artifacts + output in current checkout
+  # Usage: docker compose run --rm clean
+  clean:
+    image: ghcr.io/jshsakura/oc-potluck:latest
+    volumes:
+      - .:/workspace
+    working_dir: /workspace
+    entrypoint: ["/bin/bash", "/workspace/scripts/ci/container-tasks.sh", "clean"]
+
+  # Run tests serially (-j1) under a hard 4 GiB container cgroup limit
+  # Usage: docker compose run --rm test
+  test:
+    image: ghcr.io/jshsakura/oc-potluck:latest
+    mem_limit: 4g
+    memswap_limit: 4g
+    volumes:
+      - .:/workspace
+    working_dir: /workspace
+    entrypoint: ["/bin/bash", "/workspace/scripts/ci/container-tasks.sh", "test"]
+
+  # GDB debugger for Switch (interactive)
+  # Usage: docker compose run --rm debugger <SWITCH_IP> [PROCESS_ID]
+  debugger:
+    image: ghcr.io/jshsakura/oc-potluck:latest
+    volumes:
+      - .:/workspace
+    working_dir: /workspace
+    network_mode: host
+    stdin_open: true
+    tty: true
+    entrypoint: ["/workspace/scripts/debugger/debug.sh"]
+
+  # Run clang-tidy on project source files (not Atmosphere-libs)
+  # Usage: docker compose run --rm lint
+  lint:
+    image: ghcr.io/jshsakura/oc-potluck:latest
+    volumes:
+      - .:/workspace
+    working_dir: /workspace
+    entrypoint: ["/bin/bash", "/workspace/scripts/lint.sh"]
+
+  # Run CodeQL analysis (standalone CLI, no GitHub Actions needed)
+  # Usage: docker compose run --rm codeql-analyze
+  codeql-create:
+    image: ghcr.io/jshsakura/oc-potluck:latest
+    volumes:
+      - .:/workspace
+    working_dir: /workspace
+    entrypoint: ["/bin/bash", "/workspace/scripts/codeql-create.sh"]
+
+  codeql-analyze:
+    image: ghcr.io/jshsakura/oc-potluck:latest
+    volumes:
+      - .:/workspace
+    working_dir: /workspace
+    entrypoint: ["/bin/bash", "/workspace/scripts/codeql-analyze.sh"]
+
+  shell:
+    image: ghcr.io/jshsakura/oc-potluck:latest
+    volumes:
+      - .:/workspace
+    working_dir: /workspace
+    network_mode: host
+    stdin_open: true
+    tty: true
+    entrypoint: ["/bin/bash"]

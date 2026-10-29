@@ -1,0 +1,18 @@
+# CODEOWNERS for potluck
+# These owners will be requested for review when PRs touch these paths
+
+# Default owners for everything
+* @jshsakura
+
+# Sysmodule core
+/sysmodule/ @jshsakura
+
+# Build system
+/Makefile @jshsakura
+/Dockerfile @jshsakura
+/docker-compose.yml @jshsakura
+/.github/workflows/ @jshsakura
+
+# Documentation
+/*.md @jshsakura
+/docs/ @jshsakura

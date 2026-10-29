@@ -1,0 +1,18 @@
+---
+title: "Contribute"
+description: "Report actionable issues and submit focused, DCO-signed changes."
+---
+
+## Report a problem
+
+Read [troubleshooting](../troubleshooting/) and include versions, topology, exact reproduction and a short relevant log. Report security issues using [SECURITY.md](https://github.com/jshsakura/oc-potluck/blob/main/SECURITY.md), rather than posting exploit details or private data in a public issue.
+
+## Send a change
+
+Follow [CONTRIBUTING.md](https://github.com/jshsakura/oc-potluck/blob/main/CONTRIBUTING.md). Keep changes focused, explain the user-visible behavior and include relevant validation. All commits require DCO sign-off using `git commit -s`, with the author's configured identity. Do not hardcode another person's identity or add promotional attribution.
+
+For module changes, preserve wire layout compatibility and account for the 384 KB shared expanded heap. Avoid hot-path allocations without evidence. Use the [build guide](../building/) and verify real gameplay separately from host tests.
+
+## Improve this manual
+
+English pages live in `docs/src/content/docs/`; Korean equivalents have the same path under `ko/`. Update both for user-facing behavior changes. Keep defaults and application timing aligned with runtime code. The repository Compose source is `deploy/compose.nas.yml`; the site's copy is generated. Theme decisions live in `docs/DESIGN.md`.

@@ -1,0 +1,327 @@
+/**
+ * @file config_manager.hpp
+ * @brief Global Configuration Manager for runtime config access
+ *
+ * Provides a singleton-style interface for accessing and modifying
+ * configuration at runtime. Changes can be saved to disk and applied
+ * without requiring a reboot.
+ *
+ * ## Thread Safety
+ * All operations are thread-safe using a mutex.
+ *
+ * ## Usage
+ * @code
+ * #include "config/config_manager.hpp"
+ *
+ * // Initialize once at startup
+ * potluck::config::ConfigManager::Instance().Initialize();
+ *
+ * // Read config
+ * auto& cfg = potluck::config::ConfigManager::Instance().GetConfig();
+ * printf("Server: %s\n", cfg.server.host);
+ *
+ * // Modify and save
+ * potluck::config::ConfigManager::Instance().SetServerHost("example.com");
+ * potluck::config::ConfigManager::Instance().Save();
+ * @endcode
+ *
+ * @copyright Copyright (c) 2026 potluck contributors
+ * @license GPL-2.0-or-later
+ */
+
+#pragma once
+
+#include "config.hpp"
+#include <cstdint>
+
+namespace potluck::config {
+
+/**
+ * @brief Validate passphrase format
+ *
+ * Passphrase must match the regex: the reference client-[0-9a-f]{8}
+ * Empty passphrase (nullptr or "") is also valid (no filtering).
+ *
+ * @param passphrase Passphrase to validate
+ * @return true if valid or empty, false otherwise
+ */
+/// @gdb{tag="CONFIG:MGR", msg="Validating passphrase"}
+bool IsValidPassphrase(const char* passphrase);
+
+/**
+ * @brief Generate a random passphrase
+ *
+ * Generates a passphrase in format: the reference client-[0-9a-f]{8}
+ * Uses random hex digits for the 8-character suffix.
+ *
+ * @param out Output buffer (at least 17 bytes for null terminator)
+ * @param out_size Size of output buffer
+ */
+/// @gdb{tag="CONFIG:MGR", msg="Generating random passphrase"}
+void GenerateRandomPassphrase(char* out, size_t out_size);
+
+/**
+ * @brief Callback type for configuration change notifications
+ *
+ * @param section Changed section ("server", "network", "ldn", "debug")
+ */
+using ConfigChangeCallback = void (*)(const char* section);
+
+/**
+ * @brief Global configuration manager
+ *
+ * Singleton that manages runtime configuration with thread-safe access.
+ */
+class ConfigManager {
+public:
+    /**
+     * @brief Get the singleton instance
+     */
+    /// @gdb{tag="CONFIG:MGR", msg="Getting manager instance"}
+    static ConfigManager& Instance();
+
+    /**
+     * @brief Initialize the config manager
+     *
+     * Loads configuration from disk. Should be called once at startup
+     * after filesystem is available.
+     *
+     * @param config_path Path to config file (default: CONFIG_PATH)
+     * @return true if config loaded successfully
+     */
+    /// @gdb{tag="CONFIG:MGR", msg="Initializing configuration manager"}
+    bool Initialize(const char* config_path = CONFIG_PATH);
+
+    /**
+     * @brief Check if initialized
+     */
+    bool IsInitialized() const { return m_initialized; }
+
+    /**
+     * @brief Get current configuration (read-only)
+     */
+    const Config& GetConfig() const { return m_config; }
+
+    /**
+     * @brief Save current configuration to disk
+     *
+     * @return ConfigResult indicating success or failure
+     */
+    /// @gdb{tag="CONFIG:MGR", msg="Saving configuration to disk"}
+    ConfigResult Save();
+
+    /**
+     * @brief Reload configuration from disk
+     *
+     * Discards any unsaved changes.
+     *
+     * @return ConfigResult indicating success or failure
+     */
+    /// @gdb{tag="CONFIG:MGR", msg="Reloading configuration from disk"}
+    ConfigResult Reload();
+
+    // =========================================================================
+    // Server Settings
+    // =========================================================================
+
+    /**
+     * @brief Get server host
+     */
+    const char* GetServerHost() const { return m_config.server.host; }
+
+    /**
+     * @brief Set server host
+     *
+     * @param host New hostname (max 128 chars)
+     */
+    /// @gdb{tag="CONFIG:MGR", msg="Setting server host"}
+    void SetServerHost(const char* host);
+
+    /**
+     * @brief Get server port
+     */
+    uint16_t GetServerPort() const { return m_config.server.port; }
+
+    /**
+     * @brief Set server port
+     */
+    /// @gdb{tag="CONFIG:MGR", msg="Setting server port"}
+    void SetServerPort(uint16_t port);
+
+    /**
+     * @brief Get TLS enabled state
+     */
+    bool GetUseTls() const { return m_config.server.use_tls; }
+
+    /**
+     * @brief Set TLS enabled state
+     */
+    /// @gdb{tag="CONFIG:MGR", msg="Setting TLS enabled state"}
+    void SetUseTls(bool enabled);
+
+    // =========================================================================
+    // Network Settings
+    // =========================================================================
+
+    /**
+     * @brief Get connection timeout (ms)
+     */
+    uint32_t GetConnectTimeout() const { return m_config.network.connect_timeout_ms; }
+
+    /**
+     * @brief Set connection timeout (ms)
+     */
+    /// @gdb{tag="CONFIG:MGR", msg="Setting connect timeout"}
+    void SetConnectTimeout(uint32_t timeout_ms);
+
+    /**
+     * @brief Get ping interval (ms)
+     */
+    uint32_t GetPingInterval() const { return m_config.network.ping_interval_ms; }
+
+    /**
+     * @brief Set ping interval (ms)
+     */
+    /// @gdb{tag="CONFIG:MGR", msg="Setting ping interval"}
+    void SetPingInterval(uint32_t interval_ms);
+
+    /**
+     * @brief Get reconnect delay (ms)
+     */
+    uint32_t GetReconnectDelay() const { return m_config.network.reconnect_delay_ms; }
+
+    /**
+     * @brief Set reconnect delay (ms)
+     */
+    /// @gdb{tag="CONFIG:MGR", msg="Setting reconnect delay"}
+    void SetReconnectDelay(uint32_t delay_ms);
+
+    /**
+     * @brief Get max reconnect attempts
+     */
+    uint32_t GetMaxReconnectAttempts() const { return m_config.network.max_reconnect_attempts; }
+
+    /**
+     * @brief Set max reconnect attempts (0 = infinite)
+     */
+    /// @gdb{tag="CONFIG:MGR", msg="Setting max reconnect attempts"}
+    void SetMaxReconnectAttempts(uint32_t attempts);
+
+    // =========================================================================
+    // LDN Settings
+    // =========================================================================
+
+    /**
+     * @brief Get the LDN mode (remote or local)
+     */
+    LdnMode GetLdnMode() const { return m_config.ldn.mode; }
+
+    /**
+     * @brief Set the LDN mode
+     */
+    /// @gdb{tag="CONFIG:MGR", msg="Setting LDN mode"}
+    void SetLdnMode(LdnMode mode);
+
+    /**
+     * @brief Get passphrase
+     */
+    const char* GetPassphrase() const { return m_config.ldn.passphrase; }
+
+    /**
+     * @brief Set passphrase
+     *
+     * Passphrase must match format: the reference client-[0-9a-f]{8}
+     * Empty or nullptr clears the passphrase (allowed).
+     *
+     * @param passphrase New passphrase
+     * @return true if set successfully, false if invalid format
+     */
+    /// @gdb{tag="CONFIG:MGR", msg="Setting passphrase"}
+    bool SetPassphrase(const char* passphrase);
+
+    /**
+     * @brief Get network interface name
+     */
+    const char* GetInterfaceName() const { return m_config.ldn.interface_name; }
+
+    /**
+     * @brief Set network interface name
+     *
+     * @param name Interface name (empty = auto-detect)
+     */
+    /// @gdb{tag="CONFIG:MGR", msg="Setting interface name"}
+    void SetInterfaceName(const char* name);
+
+    // =========================================================================
+    // Debug Settings
+    // =========================================================================
+
+    /**
+     * @brief Get debug enabled state
+     */
+    bool GetDebugEnabled() const { return m_config.debug.enabled; }
+
+    /**
+     * @brief Set debug enabled state
+     */
+    /// @gdb{tag="CONFIG:MGR", msg="Setting debug enabled"}
+    void SetDebugEnabled(bool enabled);
+
+    /**
+     * @brief Get debug log level
+     */
+    uint32_t GetDebugLevel() const { return m_config.debug.level; }
+
+    /**
+     * @brief Set debug log level (0-3)
+     */
+    /// @gdb{tag="CONFIG:MGR", msg="Setting debug level"}
+    void SetDebugLevel(uint32_t level);
+
+    /**
+     * @brief Get log to file state
+     */
+    bool GetLogToFile() const { return m_config.debug.log_to_file; }
+
+    /**
+     * @brief Set log to file state
+     */
+    /// @gdb{tag="CONFIG:MGR", msg="Setting log to file"}
+    void SetLogToFile(bool enabled);
+
+    // =========================================================================
+    // Change Notification
+    // =========================================================================
+
+    /**
+     * @brief Set callback for configuration changes
+     *
+     * @param callback Function to call when config changes (nullptr to clear)
+     */
+    /// @gdb{tag="CONFIG:MGR", msg="Setting change callback"}
+    void SetChangeCallback(ConfigChangeCallback callback);
+
+    /**
+     * @brief Check if config has unsaved changes
+     */
+    bool HasUnsavedChanges() const { return m_dirty; }
+
+private:
+    ConfigManager() = default;
+    ~ConfigManager() = default;
+
+    // Non-copyable
+    ConfigManager(const ConfigManager&) = delete;
+    ConfigManager& operator=(const ConfigManager&) = delete;
+
+    /// @gdb{tag="CONFIG:MGR", msg="Config change notified"}
+    void NotifyChange(const char* section);
+
+    Config m_config{};
+    char m_config_path[256]{};
+    bool m_initialized = false;
+    bool m_dirty = false;
+    ConfigChangeCallback m_callback = nullptr;
+};
+
+} // namespace potluck::config

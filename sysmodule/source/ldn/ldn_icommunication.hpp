@@ -1,0 +1,680 @@
+/**
+ * @file ldn_icommunication.hpp
+ * @brief LDN Communication Service implementation header
+ *
+ * This service handles all the LDN IPC commands and communicates with
+ * the relay server via our TCP client.
+ *
+ * @copyright Copyright (c) 2026 potluck contributors
+ * @license GPL-2.0-or-later
+ */
+
+#pragma once
+
+#include <stratosphere.hpp>
+#include <atomic>
+#include "ldn_types.hpp"
+#include "ldn_state_machine.hpp"
+#include "ldn_node_mapper.hpp"
+#include "ldn_proxy_buffer.hpp"
+#include "ldn_network_timeout.hpp"
+#include "interfaces/icommunication.hpp"
+#include "../network/client.hpp"
+#include "../p2p/p2p_proxy_client.hpp"
+#include "../p2p/p2p_proxy_server.hpp"
+
+namespace ams::mitm::ldn {
+
+/**
+ * @brief LDN Communication Service implementation
+ *
+ * This class implements the IUserLocalCommunicationService interface,
+ * handling all LDN operations and forwarding them to our relay server
+ * via the network client.
+ *
+ * ## State Management
+ *
+ * The service maintains an LDN state machine:
+ * - None → Initialize → Initialized
+ * - Initialized → OpenAccessPoint → AccessPoint
+ * - AccessPoint → CreateNetwork → AccessPointCreated
+ * - Initialized → OpenStation → Station
+ * - Station → Connect → StationConnected
+ *
+ * State changes are notified via the state change event.
+ */
+class ICommunicationService {
+public:
+    /**
+     * @brief Constructor
+     *
+     * @param program_id Program ID of the client process (used to replace LocalCommunicationId=-1)
+     */
+    /// @gdb{tag="LDN:LIFECYCLE", msg="Communication service created"}
+    explicit ICommunicationService(ncm::ProgramId program_id);
+
+    /**
+     * @brief Destructor
+     */
+    /// @gdb{tag="LDN:LIFECYCLE", msg="Communication service destroyed"}
+    ~ICommunicationService();
+
+    // ========================================================================
+    // Query Operations
+    // ========================================================================
+
+    /**
+     * @brief Get current communication state
+     *
+     * @param state Output state value
+     * @return Result code
+     */
+    /// @gdb{tag="LDN:OPS", msg="GetState"}
+    Result GetState(ams::sf::Out<u32> state);
+
+    /**
+     * @brief Get current network information
+     *
+     * @param buffer Output network info
+     * @return Result code
+     */
+    /// @gdb{tag="LDN:OPS", msg="GetNetworkInfo"}
+    Result GetNetworkInfo(ams::sf::Out<NetworkInfo> buffer);
+
+    /**
+     * @brief Get assigned IPv4 address
+     *
+     * @param address Output IP address (host byte order)
+     * @param mask Output subnet mask (host byte order)
+     * @return Result code
+     */
+    /// @gdb{tag="LDN:OPS", msg="GetIpv4Address"}
+    Result GetIpv4Address(ams::sf::Out<u32> address, ams::sf::Out<u32> mask);
+
+    /**
+     * @brief Get last disconnect reason
+     *
+     * @param reason Output disconnect reason
+     * @return Result code
+     */
+    /// @gdb{tag="LDN:OPS", msg="GetDisconnectReason"}
+    Result GetDisconnectReason(ams::sf::Out<u32> reason);
+
+    /**
+     * @brief Get security parameters
+     *
+     * @param out Output security parameter
+     * @return Result code
+     */
+    /// @gdb{tag="LDN:OPS", msg="GetSecurityParameter"}
+    Result GetSecurityParameter(ams::sf::Out<SecurityParameter> out);
+
+    /**
+     * @brief Get network configuration
+     *
+     * @param out Output network config
+     * @return Result code
+     */
+    /// @gdb{tag="LDN:OPS", msg="GetNetworkConfig"}
+    Result GetNetworkConfig(ams::sf::Out<NetworkConfig> out);
+
+    /**
+     * @brief Attach to state change event
+     *
+     * @param handle Output event handle
+     * @return Result code
+     */
+    /// @gdb{tag="LDN:OPS", msg="AttachStateChangeEvent"}
+    Result AttachStateChangeEvent(ams::sf::Out<ams::sf::CopyHandle> handle);
+
+    /**
+     * @brief Get network info with node updates
+     *
+     * @param buffer Output network info
+     * @param pUpdates Output node update array
+     * @return Result code
+     */
+    /// @gdb{tag="LDN:OPS", msg="GetNetworkInfoLatestUpdate"}
+    Result GetNetworkInfoLatestUpdate(
+        ams::sf::Out<NetworkInfo> buffer,
+        ams::sf::OutArray<NodeLatestUpdate> pUpdates);
+
+    /**
+     * @brief Scan for available networks
+     *
+     * @param count Output number of networks found
+     * @param buffer Output network info array
+     * @param request Channel to scan (0 for all) and the scan filter
+     * @return Result code
+     */
+    /// @gdb{tag="LDN:OPS", msg="Scan"}
+    Result Scan(
+        ams::sf::Out<u32> count,
+        ams::sf::OutAutoSelectArray<NetworkInfo> buffer,
+        const ScanRequest &request);
+
+    // ========================================================================
+    // Access Point Operations
+    // ========================================================================
+
+    /**
+     * @brief Open as access point (host mode)
+     *
+     * @return Result code
+     */
+    /// @gdb{tag="LDN:OPS", msg="OpenAccessPoint"}
+    Result OpenAccessPoint();
+
+    /**
+     * @brief Close access point
+     *
+     * @return Result code
+     */
+    /// @gdb{tag="LDN:OPS", msg="CloseAccessPoint"}
+    Result CloseAccessPoint();
+
+    /**
+     * @brief Create a network
+     *
+     * @param data Network creation configuration
+     * @return Result code
+     */
+    /// @gdb{tag="LDN:OPS", msg="CreateNetwork"}
+    Result CreateNetwork(const CreateNetworkConfig &data);
+
+    /**
+     * @brief Destroy the network
+     *
+     * @return Result code
+     */
+    /// @gdb{tag="LDN:OPS", msg="DestroyNetwork"}
+    Result DestroyNetwork();
+
+    /**
+     * @brief Set advertise data
+     *
+     * @param data Advertise data buffer
+     * @return Result code
+     */
+    /// @gdb{tag="LDN:OPS", msg="SetAdvertiseData"}
+    Result SetAdvertiseData(ams::sf::InAutoSelectBuffer data);
+
+    /**
+     * @brief Set station accept policy
+     *
+     * @param policy Accept policy
+     * @return Result code
+     */
+    /// @gdb{tag="LDN:OPS", msg="SetStationAcceptPolicy"}
+    Result SetStationAcceptPolicy(u8 policy);
+
+    // ========================================================================
+    // Station Operations
+    // ========================================================================
+
+    /**
+     * @brief Open as station (client mode)
+     *
+     * @return Result code
+     */
+    /// @gdb{tag="LDN:OPS", msg="OpenStation"}
+    Result OpenStation();
+
+    /**
+     * @brief Close station
+     *
+     * @return Result code
+     */
+    /// @gdb{tag="LDN:OPS", msg="CloseStation"}
+    Result CloseStation();
+
+    /**
+     * @brief Connect to a network
+     *
+     * @param dat Connection parameters (security config, user config, version, option)
+     * @param data Network to connect to
+     * @return Result code
+     */
+    /// @gdb{tag="LDN:OPS", msg="Connect"}
+    Result Connect(const ConnectNetworkData &dat, const NetworkInfo& data);
+
+    /**
+     * @brief Disconnect from network
+     *
+     * @return Result code
+     */
+    /// @gdb{tag="LDN:OPS", msg="Disconnect"}
+    Result Disconnect();
+
+    // ========================================================================
+    // Lifecycle Operations
+    // ========================================================================
+
+    /**
+     * @brief Initialize the service
+     *
+     * @param client_process_id Client process ID
+     * @return Result code
+     */
+    /// @gdb{tag="LDN:OPS", msg="Initialize"}
+    Result Initialize(const ams::sf::ClientProcessId& client_process_id);
+
+    /**
+     * @brief Finalize the service
+     *
+     * @return Result code
+     */
+    /// @gdb{tag="LDN:OPS", msg="Finalize"}
+    Result Finalize();
+
+    /**
+     * @brief Initialize with system flags
+     *
+     * @param unk Unknown parameter
+     * @param client_process_id Client process ID
+     * @return Result code
+     */
+    /// @gdb{tag="LDN:OPS", msg="InitializeSystem2"}
+    Result InitializeSystem2(u64 unk, const ams::sf::ClientProcessId& client_process_id);
+
+    // ========================================================================
+    // Private Network Operations
+    // ========================================================================
+
+    /**
+     * @brief Scan for private networks
+     *
+     * Same as Scan() but includes private networks in results.
+     *
+     * @param count Output number of networks found
+     * @param buffer Output network info array
+     * @param request Channel to scan (0 for all) and the scan filter
+     * @return Result code
+     */
+    /// @gdb{tag="LDN:OPS", msg="ScanPrivate"}
+    Result ScanPrivate(
+        ams::sf::Out<u32> count,
+        ams::sf::OutAutoSelectArray<NetworkInfo> buffer,
+        const ScanRequest &request);
+
+    /**
+     * @brief Create a private (password-protected) network
+     *
+     * @param data Network configuration including security parameter
+     * @param addressList Address list buffer
+     * @return Result code
+     */
+    /// @gdb{tag="LDN:OPS", msg="CreateNetworkPrivate"}
+    Result CreateNetworkPrivate(
+        const CreateNetworkPrivateConfig &data,
+        ams::sf::InPointerBuffer addressList);
+
+    /**
+     * @brief Connect to a private network
+     *
+     * @param data Connection data including security parameter
+     * @return Result code
+     */
+    /// @gdb{tag="LDN:OPS", msg="ConnectPrivate"}
+    Result ConnectPrivate(const ConnectPrivateData &data);
+
+    // ========================================================================
+    // Other Operations
+    // ========================================================================
+
+    /**
+     * @brief Set wireless controller restriction
+     * @return Result code (stub)
+     */
+    /// @gdb{tag="LDN:OPS", msg="SetWirelessControllerRestriction"}
+    Result SetWirelessControllerRestriction();
+
+    /**
+     * @brief Reject a node from the network
+     *
+     * @param nodeId Node ID to reject
+     * @return Result code
+     */
+    /// @gdb{tag="LDN:OPS", msg="Reject: nodeId=%u", args="$x1"}
+    Result Reject(u32 nodeId);
+
+    /**
+     * @brief Add entry to accept filter
+     * @return Result code (stub)
+     */
+    /// @gdb{tag="LDN:OPS", msg="AddAcceptFilterEntry"}
+    Result AddAcceptFilterEntry();
+
+    /**
+     * @brief Clear accept filter
+     * @return Result code (stub)
+     */
+    /// @gdb{tag="LDN:OPS", msg="ClearAcceptFilter"}
+    Result ClearAcceptFilter();
+
+private:
+    /**
+     * @brief Connect to relay server
+     * @return Result code
+     */
+    /// @gdb{tag="LDN:ASYNC", msg="ConnectToServer: entering"}
+    Result ConnectToServer();
+
+    /**
+     * @brief Disconnect from relay server
+     *
+     * @param reason Why, for the log; the next debugging session starts there
+     */
+    /// @gdb{tag="LDN:ASYNC", msg="DisconnectFromServer: entering"}
+    void DisconnectFromServer(const char* reason);
+
+    /**
+     * @brief Check if connected to server
+     * @return true if connected and ready
+     */
+    /// @gdb{tag="LDN:ASYNC", msg="IsServerConnected: queried"}
+    bool IsServerConnected() const;
+
+private:
+    /**
+     * @brief Handle packet received from server
+     * @param id Packet type
+     * @param data Packet payload
+     * @param size Payload size
+     */
+    /// @gdb{tag="LDN:ASYNC", msg="HandleServerPacket: id=%u size=%zu", args="$x2, $x3"}
+    void HandleServerPacket(potluck::protocol::PacketId id, const uint8_t* data, size_t size);
+    /**
+     * @brief Handle Connected packet from server
+     *
+     * Server confirms we joined/created a network. Contains NetworkInfo
+     * with node data, which we fix up (sceneId, localCommId, channel)
+     * and then signal state change.
+     *
+     * @param data Packet payload
+     * @param size Payload size
+     */
+    void HandleConnectedPacket(const uint8_t* data, size_t size);
+
+    /**
+     * @brief Handle SyncNetwork packet from server
+     *
+     * Server sends updated network state. We update NetworkInfo,
+     * fix sceneId/localCommId, and signal state change.
+     *
+     * @param data Packet payload
+     * @param size Payload size
+     */
+    void HandleSyncNetworkPacket(const uint8_t* data, size_t size);
+
+    /**
+     * @brief Handle ExternalProxy packet from server
+     *
+     * Server sends P2P proxy info. We skip self-loopback, ignore
+     * if P2P disabled, or spawn a connect thread for remote peers.
+     *
+     * @param data Packet payload
+     * @param size Payload size
+     */
+    void HandleExternalProxyPacket(const uint8_t* data, size_t size);
+
+    /**
+     * @brief Handle ProxyData packet from server
+     *
+     * Server relays game data from other players. Routes to BSD MITM
+     * proxy sockets or falls back to legacy buffer.
+     *
+     * @param data Packet payload
+     * @param size Payload size
+     */
+    void HandleProxyDataPacket(const uint8_t* data, size_t size);
+
+    /**
+     * @brief Handle NetworkError packet from server
+     *
+     * Server reports a network error. Disables P2P on PortUnreachable
+     * and signals the error event.
+     *
+     * @param data Packet payload
+     * @param size Payload size
+     */
+    void HandleNetworkErrorPacket(const uint8_t* data, size_t size);
+
+    /**
+     * @brief Handle ScanReply packet from server
+     *
+     * Server sends one network info for each discovered network.
+     * Results are stored in the scan buffer and sceneId/localCommId
+     * are fixed for reference compatibility.
+     *
+     * @param data Packet payload
+     * @param size Payload size
+     */
+    void HandleScanReplyPacket(const uint8_t* data, size_t size);
+
+    /**
+     * @brief Wait for a specific packet response from server
+     * @param expected_id Expected packet type
+     * @param timeout_ms Timeout in milliseconds
+     * @return true if packet received, false on timeout
+     */
+    /// @gdb{tag="LDN:ASYNC", msg="WaitForResponse: expected_id=%u timeout_ms=%lu", args="$x1, $x2"}
+    bool WaitForResponse(potluck::protocol::PacketId expected_id, uint64_t timeout_ms);
+
+private:
+    LdnStateMachine m_state_machine;        ///< Thread-safe state machine
+    u64 m_error_state;                      ///< Error state flag
+    u64 m_client_process_id;                ///< Client game process ID
+
+    NetworkInfo m_network_info;             ///< Current network info
+    DisconnectReason m_disconnect_reason;   ///< Last disconnect reason
+    u32 m_ipv4_address;                     ///< Assigned IPv4 address
+    u32 m_subnet_mask;                      ///< Subnet mask
+
+    potluck::network::RelayClient m_server_client; ///< Server communication client
+    bool m_server_connected;                ///< Server connection status
+
+    LdnNodeMapper m_node_mapper;            ///< Node ID to IP mapping
+    LdnProxyBuffer m_proxy_buffer;          ///< Incoming proxy data buffer
+
+    // Response handling with events (like the reference client ManualResetEvent/AutoResetEvent)
+    // Using AutoClear for response/scan/reject so TimedWaitAny consumes the signal
+    // automatically — mirrors C# WaitHandle.WaitAny semantics exactly.
+    os::Event m_response_event;             ///< Signaled when expected response received
+    os::Event m_scan_event;                 ///< Signaled when scan completes (ScanReplyEnd)
+    os::Event m_error_event;                 ///< Signaled on network error
+    os::Event m_reject_event;               ///< Signaled when reject reply received
+    os::Event m_handshake_event;             ///< Signaled when RelayClient reaches Ready state
+    potluck::protocol::PacketId m_last_response_id; ///< Last received packet ID
+
+    // Scan results buffer (reduced to save ~18KB of memory)
+    static constexpr size_t MAX_SCAN_RESULTS = 8;   ///< Max networks from scan (reduced from 24)
+    NetworkInfo m_scan_results[MAX_SCAN_RESULTS];   ///< Scan results buffer
+    size_t m_scan_result_count;                     ///< Number of scan results
+
+    // Advertise data buffer
+    uint8_t m_advertise_data[384];          ///< Stored advertise data
+    size_t m_advertise_data_size;           ///< Size of advertise data
+
+    // Game version (like the reference client _gameVersion)
+    uint8_t m_game_version[16];             ///< Game version string for CreateAccessPoint
+
+    // Network connected flag (like the reference client _networkConnected)
+    bool m_network_connected;               ///< True when in active network session
+
+    // Node state tracking for GetNetworkInfoLatestUpdate
+    bool m_prev_node_connected[NodeCountMax]; ///< Previous connected state of each node
+
+    // Last network error (like the reference client _lastError)
+    potluck::protocol::NetworkErrorCode m_last_network_error; ///< Last error from server
+
+    // P2P Proxy support (like the reference client _useP2pProxy, _connectedProxy, _hostedProxy, Config)
+    bool m_use_p2p_proxy;                                   ///< True if P2P proxy enabled
+    potluck::protocol::ProxyConfig m_proxy_config;          ///< Current proxy configuration
+    potluck::protocol::ExternalProxyConfig m_external_proxy_config; ///< External proxy config
+    p2p::P2pProxyClient* m_p2p_client;                      ///< Connected P2P proxy client (joiner side)
+    p2p::P2pProxyServer* m_p2p_server;                      ///< Hosted P2P proxy server (host side)
+
+    // Async ExternalProxy connect thread — mirrors the reference client's architecture
+    // where HandleExternalProxy runs on the receive thread (NetCoreServer
+    // OnReceived) instead of the request thread, so the server's
+    // `Connected` packet can still be parsed while the P2P client is
+    // mid-handshake. Now that the receive thread is dedicated and never
+    // blocks on P2P connect, this stays for compatibility.
+    os::ThreadType m_p2p_connect_thread;
+    std::atomic<bool> m_p2p_connect_thread_active{false};
+    bool m_p2p_connect_thread_initialized = false;
+    potluck::protocol::ExternalProxyConfig m_pending_p2p_config{};
+
+    // Inactivity timeout (like the reference client _timeout)
+    NetworkTimeout m_inactivity_timeout;                    ///< Auto-disconnect after idle period
+
+    // Dedicated receive thread — reads packets from master TCP and dispatches
+    // them via HandleServerPacket immediately, like NetCoreServer's OnReceived
+    // callback in the reference client. IPC handlers no longer call update(); they wait on
+    // os::Event (via TimedWaitAny) which the receive thread signals.
+    os::ThreadType m_recv_thread;                           ///< Receive thread (replaces old bg thread)
+    std::atomic<bool> m_recv_thread_running;                 ///< Receive thread running flag
+
+    // Mutex protecting shared state written by the receive thread and read
+    // by IPC handlers: m_network_info, m_network_connected, m_scan_results,
+    // m_scan_result_count, m_ipv4_address, m_subnet_mask, m_disconnect_reason,
+    // m_prev_node_connected, m_last_network_error, m_last_response_id.
+    // Send operations on m_server_client are already serialized by TcpClient's
+    // internal m_send_mutex.
+    mutable os::SdkMutex m_shared_mutex;                     ///< Protects shared state
+
+    /**
+     * @brief Receive thread entry point
+     * @param arg Pointer to ICommunicationService instance
+     */
+    /// @gdb{tag="LDN:ASYNC", msg="ReceiveThreadEntry: thread started arg=%p", args="$x0"}
+    static void ReceiveThreadEntry(void* arg);
+
+    /**
+     * @brief Receive thread main loop — reads packets, dispatches immediately
+     */
+    /// @gdb{tag="LDN:ASYNC", msg="ReceiveThreadFunc: loop iteration"}
+    void ReceiveThreadFunc();
+
+    /**
+     * @brief Async P2P connect thread entry — see m_p2p_connect_thread
+     * @param arg Pointer to ICommunicationService instance
+     */
+    /// @gdb{tag="LDN:ASYNC", msg="P2pConnectThreadEntry: thread started arg=%p", args="$x0"}
+    static void P2pConnectThreadEntry(void* arg);
+
+    // Program ID for LocalCommunicationId replacement (like the reference client NeedsRealId handling)
+    ncm::ProgramId m_program_id;                            ///< Client program ID (title ID)
+    u64 m_local_communication_id;                           ///< LocalCommunicationId from NACP (for LDN filtering)
+    u16 m_expected_scene_id;                                ///< Expected sceneId from game's Scan filter (the reference client may use 0)
+
+    /**
+     * @brief Static callback for inactivity timeout
+     *
+     * Called when the timeout expires. Disconnects from server.
+     */
+    static void OnInactivityTimeout();
+
+    /**
+     * @brief Find our local node ID in the network info
+     *
+     * Searches through the nodes array to find the node matching our
+     * m_ipv4_address. Returns 0xFF if not found.
+     *
+     * @return Node ID (0-7) or 0xFF if not found
+     */
+    u8 FindLocalNodeId() const;
+
+    /**
+     * @brief Set game version from local_communication_version
+     *
+     * Converts version number to string format for RelayNetworkConfig.
+     *
+     * @param version Version buffer (16 bytes)
+     */
+    void SetGameVersion(const uint8_t* version);
+
+    /**
+     * @brief Consume last network error (like the reference client ConsumeNetworkError)
+     *
+     * Returns the last error and resets it to None.
+     *
+     * @return Last network error code
+     */
+    potluck::protocol::NetworkErrorCode ConsumeNetworkError();
+
+    /**
+     * @brief Handle ExternalProxy packet - connect to P2P host
+     *
+     * Called when server sends ExternalProxyConfig indicating a P2P host
+     * is available. Creates P2pProxyClient and establishes direct connection.
+     *
+     * @param config ExternalProxyConfig from master server
+     */
+    void HandleExternalProxyConnect(const potluck::protocol::ExternalProxyConfig& config);
+
+    /**
+     * @brief Disconnect from P2P proxy if connected
+     */
+    void DisconnectP2pProxy();
+
+    /**
+     * @brief Start P2P proxy server for hosting
+     *
+     * Called when creating a network. Starts P2pProxyServer and attempts
+     * UPnP NAT punch to allow direct P2P connections.
+     *
+     * @return true if server started (UPnP may or may not succeed)
+     */
+    bool StartP2pProxyServer();
+
+    /**
+     * @brief Stop P2P proxy server if running
+     */
+    void StopP2pProxyServer();
+
+    /**
+     * @brief Handle ExternalProxyToken from master server
+     *
+     * Called when master server notifies us a joiner is about to connect.
+     * Adds token to waiting list for authentication.
+     *
+     * @param token Token for the expected joiner
+     */
+    void HandleExternalProxyToken(const potluck::protocol::ExternalProxyToken& token);
+
+public:
+    /**
+     * @brief Send ProxyData to server (for BSD MITM callback)
+     *
+     * This method is called by the BSD MITM layer to send game socket data
+     * through the LDN server connection.
+     *
+     * @param header ProxyData header with addressing info
+     * @param data Packet payload
+     * @param data_len Payload length
+     * @return ClientOpResult indicating success or failure
+     */
+    /// @gdb{tag="LDN:OPS", msg="SendProxyDataToServer"}
+    potluck::network::ClientOpResult SendProxyDataToServer(
+        const potluck::protocol::ProxyDataHeader& header,
+        const void* data,
+        size_t data_len,
+        bool may_wait = true);
+
+    /**
+     * @brief Send a TCP control packet (ProxyConnect, ProxyConnectReply,
+     *        ProxyDisconnect) to the relay server
+     *
+     * Always goes over the master connection: the relay is what pairs the
+     * two ends of a proxied TCP stream.
+     */
+    potluck::network::ClientOpResult SendProxyControlToServer(
+        potluck::protocol::PacketId id, const void* payload, size_t payload_size);
+};
+
+// Verify interface compliance
+static_assert(ams::mitm::ldn::IsICommunicationInterface<ICommunicationService>);
+
+} // namespace ams::mitm::ldn

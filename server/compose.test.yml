@@ -1,0 +1,5 @@
+services:
+  ldn-server:
+    cgroup_parent: potluck-ci-tests.slice
+  redis:
+    cgroup_parent: potluck-ci-tests.slice

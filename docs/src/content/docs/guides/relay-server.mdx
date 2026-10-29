@@ -1,0 +1,93 @@
+---
+title: "Run a Docker relay"
+description: "Deploy the relay and Redis, configure ports and keep data across updates."
+---
+
+A relay is needed only for remote play. It discovers rooms and forwards traffic; Redis holds server statistics. GitHub Pages hosts this manual, **not a running relay**.
+
+Docker is optional. For a direct .NET deployment, see [Run the relay from source](../relay-native/).
+
+## Requirements
+
+- A Docker host with Compose v2 and an image-supported CPU (amd64 or arm64). An arbitrary 32-bit ARM NAS is not supported by this example.
+- Enough available memory for the configured caps: relay 1 GiB + Redis 256 MiB, plus the host and other apps. These are limits, not measured minimum usage or a player capacity promise.
+- TCP 30456 reachable from participating consoles. Redis remains private.
+
+For a GUI walkthrough, use the [Synology/NAS guide](../synology/).
+
+## Download and start
+
+Save [compose.nas.yml](/oc-potluck/downloads/compose.nas.yml) in an empty deployment folder, for example `potluck/`. You can also copy [the repository example](https://github.com/jshsakura/oc-potluck/blob/main/deploy/compose.nas.yml). Review it before starting; commands below run in that folder.
+
+```sh
+docker compose -f compose.nas.yml config --quiet
+docker compose -f compose.nas.yml pull
+docker compose -f compose.nas.yml up -d
+docker compose -f compose.nas.yml ps
+docker compose -f compose.nas.yml logs --tail=100 ldn-server redis
+```
+
+Expect Redis to become healthy and `ldn-server` to stay running. A running container alone does not prove WAN reachability. Enter the NAS/host address and port in PotLuck and run its connection test, then test a two-console room.
+
+## Deployment options
+
+Optional `.env` beside the Compose file:
+
+```dotenv
+LDN_SERVER_IMAGE=ghcr.io/jshsakura/oc-potluck-server:v0.2.3
+LDN_BIND_IP=0.0.0.0
+LDN_PORT=30456
+```
+
+| Value | Effect | Change when |
+| --- | --- | --- |
+| `LDN_SERVER_IMAGE` | Explicit relay image tag; module and server versions are separate | Updating or rolling back a reviewed server release |
+| `LDN_BIND_IP` | Host address on which Docker publishes the TCP port | Restricting the listener to a specific host interface. `127.0.0.1` prevents direct LAN access |
+| `LDN_PORT` | **Host** published TCP port | Default port conflicts. Set `30457` here and on device; container still listens on 30456 |
+
+After editing `.env` or Compose, recreate with `up -d`. This file substitution is a Compose feature: the server process inside the container still gets `LDN_PORT=30456` from its environment block. Do not confuse host and container ports.
+
+Internal settings in the example:
+
+| Setting | Purpose |
+| --- | --- |
+| `LDN_HOST=0.0.0.0`, `LDN_PORT=30456` | Bind the relay inside its container |
+| `LDN_REDIS_HOST=redis`, `LDN_REDIS_PORT=6379` | Container-only statistics connection |
+| `IP_BAN_FILE_PATH=/data/potluck/bannedips.txt` | Persistent server ban list in the named volume |
+| `user: 10001:10001` | Unprivileged process identity; relevant to bind-mount permissions |
+| `read_only`, dropped capabilities, `no-new-privileges` | Restrict container permissions; writable paths are explicit |
+| `mem_limit`, `memswap_limit`, `pids_limit` | Bound resource use; inspect OOM/restart logs before tuning |
+| `logging` | Rotate JSON logs at 10 MB, three files per service |
+
+Redis has no published port and shares an internal network with the relay. `protected-mode no` is intended only inside that isolated network. **Do not publish 6379 or attach untrusted containers to it.** Do not add host networking or privileged mode to fix a connection problem.
+
+## Connect consoles
+
+On the same LAN, use the host's LAN IPv4. For outside players, forward the published **TCP** port to the host's reserved LAN IP and allow it through the host firewall. Use the public IP/DDNS on outside consoles. Port forwarding is unnecessary for local mode. Read [NAS networking](../synology/) for CGNAT and reverse proxy limitations.
+
+The current device client uses plain TCP. Channels isolate room discovery, not encryption or strong authentication. Share the endpoint only as intended and limit firewall sources where practical. An ordinary HTTP/TLS reverse proxy cannot add supported TLS to this client.
+
+## Data, backup and permissions
+
+The default named volume `ldn-data` holds the ban-list path and survives container recreation. Its effective name is prefixed by the Compose project name. Keep the same folder/project name during updates; changing it can create a new empty volume. Back up Compose, `.env` and that volume using your host's volume backup tooling while the relay is stopped.
+
+Redis data is deliberately ephemeral (`--save ''`, `--appendonly no`); statistics are not a durable history backup. Active rooms also do not survive a server restart. Tell players before maintenance.
+
+The named volume avoids most NAS bind-folder ACL problems. If replacing it with `./data:/data/potluck`, create that folder and grant **UID/GID 10001:10001** write access using your NAS ACL/ownership tools. Keep access limited; do not use world-writable permissions or run the container as root as a workaround.
+
+## Update and rollback
+
+1. Stop active play, back up configuration and the data volume, and read release notes.
+2. Set the reviewed image tag in `.env` (or the image field). Tags are explicit; this example does not track `latest` automatically.
+3. Run `pull`, then `up -d` with the same Compose file/project. Check health/logs and a console connection.
+4. If rollback is required, restore the previous image tag and repeat `pull`/`up -d`, checking release notes for data compatibility first.
+
+```sh
+docker compose -f compose.nas.yml stop
+docker compose -f compose.nas.yml pull
+docker compose -f compose.nas.yml up -d
+```
+
+`stop` keeps containers and volumes. `down` removes containers/networks while retaining named volumes by default. **`down -v` deletes named-volume data.** Avoid NAS project Clean/Delete actions that remove volumes unless you intend to erase it.
+
+For restart loops, inspect the first relevant log error, Redis health, architecture and folder permissions. Use [troubleshooting](../troubleshooting/) for a bounded evidence checklist.

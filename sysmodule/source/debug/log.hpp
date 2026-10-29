@@ -1,0 +1,417 @@
+/**
+ * @file log.hpp
+ * @brief Debug Logging System for potluck
+ *
+ * Provides configurable logging functionality for debugging and troubleshooting.
+ * Supports multiple log levels, console output, and optional file logging.
+ *
+ * ## Design Principles
+ *
+ * 1. **Zero Overhead When Disabled**: Logging calls compile to no-ops when
+ *    debug is disabled, ensuring no performance impact in production.
+ *
+ * 2. **No Dynamic Allocation**: Uses fixed-size buffers suitable for
+ *    embedded/sysmodule use on Nintendo Switch.
+ *
+ * 3. **Thread-Safe**: All logging operations are thread-safe.
+ *
+ * 4. **Configurable at Runtime**: Log level and file output can be changed
+ *    via config.ini without recompilation.
+ *
+ * ## Log Levels
+ *
+ * - **Error (0)**: Critical issues that prevent normal operation
+ * - **Warning (1)**: Potential problems that don't prevent operation
+ * - **Info (2)**: Normal operational messages
+ * - **Verbose (3)**: Detailed debugging information
+ *
+ * ## Usage Example
+ *
+ * @code
+ * #include "debug/log.hpp"
+ *
+ * // Initialize logger (typically done once at startup)
+ * potluck::debug::g_logger.init(config.debug);
+ *
+ * // Use logging macros
+ * LOG_ERROR("Connection failed: %s", error_msg);
+ * LOG_WARN("Retrying connection, attempt %d", attempt);
+ * LOG_INFO("Connected to server %s:%d", host, port);
+ * LOG_VERBOSE("Packet received: %zu bytes", size);
+ * @endcode
+ *
+ * ## File Logging
+ *
+ * When enabled, logs are written to: `/config/potluck/potluck.log`
+ *
+ * @see config/config.hpp for DebugConfig structure
+ */
+
+#pragma once
+#include "potluck_paths.h"
+
+#include <atomic>
+#include <cstdint>
+#include <cstddef>
+#include <cstdarg>
+
+#ifdef __SWITCH__
+#include <stratosphere/os/os_mutex.hpp>
+#else
+#include <mutex>
+#endif
+
+// Forward declaration to avoid circular include
+namespace potluck::config {
+    struct DebugConfig;
+}
+
+namespace potluck::debug {
+
+// =============================================================================
+// Constants
+// =============================================================================
+
+/** @brief Maximum length of a single log message */
+constexpr size_t MAX_LOG_MESSAGE_LENGTH = 256;
+
+/** @brief Maximum number of messages in the circular log buffer */
+constexpr size_t MAX_LOG_BUFFER_ENTRIES = 64;
+
+/** @brief Default log file path on SD card */
+constexpr const char* DEFAULT_LOG_PATH = POTLUCK_LOG_PATH;
+
+/// Largest the log file grows to. Past it the file moves to "<path>.1", replacing
+/// the previous backup, and a new file starts: at most twice this on the SD card.
+constexpr size_t MAX_LOG_FILE_BYTES = 2 * 1024 * 1024;
+
+// =============================================================================
+// Log Levels
+// =============================================================================
+
+/**
+ * @brief Log severity levels
+ *
+ * Lower values indicate higher severity. The configured level determines
+ * which messages are output - only messages at or below the configured
+ * level will be logged.
+ */
+enum class LogLevel : uint32_t {
+    Error = 0,      ///< Critical errors (always logged when enabled)
+    Warning = 1,    ///< Warnings (potential issues)
+    Info = 2,       ///< Informational messages
+    Verbose = 3     ///< Detailed debug output
+};
+
+/**
+ * @brief Convert LogLevel to human-readable string
+ *
+ * @param level The log level
+ * @return Static string representation (e.g., "ERROR", "WARN")
+ */
+inline const char* log_level_to_string(LogLevel level) {
+    switch (level) {
+        case LogLevel::Error:   return "ERROR";
+        case LogLevel::Warning: return "WARN";
+        case LogLevel::Info:    return "INFO";
+        case LogLevel::Verbose: return "VERBOSE";
+        default:                return "UNKNOWN";
+    }
+}
+
+// =============================================================================
+// Log Message Formatting
+// =============================================================================
+
+/**
+ * @brief Format a log message with timestamp and level prefix
+ *
+ * @param buffer Output buffer for formatted message
+ * @param buffer_size Size of output buffer
+ * @param level Log level for prefix
+ * @param format printf-style format string
+ * @param ... Format arguments
+ */
+/// @gdb{tag="DEBUG:LOG", msg="format_log_message"}
+void format_log_message(char* buffer, size_t buffer_size, LogLevel level,
+                        const char* format, ...);
+
+/**
+ * @brief Format a log message with va_list
+ *
+ * @param buffer Output buffer for formatted message
+ * @param buffer_size Size of output buffer
+ * @param level Log level for prefix
+ * @param format printf-style format string
+ * @param args Format arguments as va_list
+ */
+/// @gdb{tag="DEBUG:LOG", msg="format_log_message_v"}
+void format_log_message_v(char* buffer, size_t buffer_size, LogLevel level,
+                          const char* format, va_list args);
+
+// =============================================================================
+// Circular Log Buffer
+// =============================================================================
+
+/**
+ * @brief Circular buffer for storing recent log messages
+ *
+ * Stores the most recent log messages in memory for display in the
+ * Overlay or other debugging tools.
+ */
+class LogBuffer {
+public:
+    /**
+     * @brief Initialize the log buffer
+     *
+     * @param capacity Maximum number of messages to store (up to MAX_LOG_BUFFER_ENTRIES)
+     */
+    /// @gdb{tag="DEBUG:LOG", msg="LogBuffer init"}
+    void init(size_t capacity = MAX_LOG_BUFFER_ENTRIES);
+
+    /**
+     * @brief Add a message to the buffer
+     *
+     * If buffer is full, oldest message is overwritten.
+     *
+     * @param message Null-terminated message string
+     */
+    /// @gdb{tag="DEBUG:LOG", msg="LogBuffer add"}
+    void add(const char* message);
+
+    /**
+     * @brief Get message at index
+     *
+     * @param index Index from oldest (0) to newest (count-1)
+     * @return Message string or nullptr if index invalid
+     */
+    const char* get(size_t index) const;
+
+    /**
+     * @brief Get all messages as a single string
+     *
+     * @param buffer Output buffer
+     * @param buffer_size Size of output buffer
+     */
+    /// @gdb{tag="DEBUG:LOG", msg="LogBuffer get_all"}
+    void get_all(char* buffer, size_t buffer_size) const;
+
+    /**
+     * @brief Get number of messages in buffer
+     */
+    size_t count() const { return m_count; }
+
+    /**
+     * @brief Clear all messages
+     */
+    /// @gdb{tag="DEBUG:LOG", msg="LogBuffer clear"}
+    void clear();
+
+private:
+    char m_messages[MAX_LOG_BUFFER_ENTRIES][MAX_LOG_MESSAGE_LENGTH];
+    size_t m_capacity = MAX_LOG_BUFFER_ENTRIES;
+    size_t m_count = 0;
+    size_t m_head = 0;  // Index of oldest message
+    size_t m_tail = 0;  // Index where next message will be written
+};
+
+// =============================================================================
+// Logger Class
+// =============================================================================
+
+/**
+ * @brief Main logger class
+ *
+ * Handles log message formatting, filtering by level, and output to
+ * console and/or file. Thread-safe for concurrent logging.
+ */
+class Logger {
+public:
+    Logger() = default;
+    ~Logger();
+
+    // Non-copyable
+    Logger(const Logger&) = delete;
+    Logger& operator=(const Logger&) = delete;
+
+    /**
+     * @brief Initialize logger with configuration
+     *
+     * @param config Debug configuration from config.ini
+     * @param log_path Optional custom log file path (default: DEFAULT_LOG_PATH)
+     */
+    /// @gdb{tag="DEBUG:LOGGER", msg="Logger initialized"}
+    void init(const config::DebugConfig& config,
+              const char* log_path = DEFAULT_LOG_PATH);
+
+    /**
+     * @brief Check if logging is enabled
+     */
+    bool is_enabled() const { return m_enabled.load(); }
+
+    /**
+     * @brief Turn logging on or off while running, with the given level
+     *
+     * A sysmodule has no console, so logging on means writing the log file.
+     */
+    void apply(bool enabled, uint32_t level);
+
+    /**
+     * @brief Get current log level
+     */
+    LogLevel get_level() const { return m_level.load(); }
+
+    /**
+     * @brief Check if a message at given level should be logged
+     *
+     * @param level Log level to check
+     * @return true if message should be logged
+     */
+    /// @gdb{tag="DEBUG:LOG", msg="should_log"}
+    bool should_log(LogLevel level) const;
+
+    /**
+     * @brief Log a message
+     *
+     * @param level Log level
+     * @param format printf-style format string
+     * @param ... Format arguments
+     */
+    /// @gdb{tag="DEBUG:LOG", msg="log"}
+    void log(LogLevel level, const char* format, ...);
+
+    /**
+     * @brief Log a message with va_list
+     *
+     * @param level Log level
+     * @param format printf-style format string
+     * @param args Format arguments
+     */
+    /// @gdb{tag="DEBUG:LOG", msg="log_v"}
+    void log_v(LogLevel level, const char* format, va_list args);
+
+    /**
+     * @brief Flush any buffered output to file
+     */
+    /// @gdb{tag="DEBUG:LOG", msg="flush"}
+    void flush();
+
+    /**
+     * @brief Get access to the log buffer for overlay display
+     *
+     * @return Reference to internal log buffer
+     */
+    const LogBuffer& get_buffer() const { return m_buffer; }
+
+    /**
+     * @brief Get mutable access to log buffer
+     *
+     * @return Reference to internal log buffer
+     */
+    LogBuffer& get_buffer() { return m_buffer; }
+
+    /**
+     * @brief Check and close file if idle timeout expired
+     *
+     * Should be called periodically. Closes the file if no writes
+     * occurred within the timeout period (5 seconds).
+     */
+    void check_idle_timeout();
+
+private:
+    void output_message(const char* message);
+    /// @gdb{tag="DEBUG:LOGGER", msg="Log file opened"}
+    void open_file();
+    /// @gdb{tag="DEBUG:LOGGER", msg="Log file closed"}
+    void close_file();
+    /// Move the full log to "<path>.1" and start a new file
+    void rotate_file();
+
+    std::atomic<bool> m_enabled{false};
+    std::atomic<LogLevel> m_level{LogLevel::Warning};
+    bool m_log_to_file = false;
+    char m_log_path[256] = {0};
+    LogBuffer m_buffer;
+    void* m_file = nullptr;  // FILE* on PC, unused on Switch
+    bool m_file_open = false;
+    size_t m_file_offset = 0;
+    uint64_t m_last_write_tick = 0;  // Last write timestamp (ticks)
+    bool m_header_written = false;   // Track if header was written this session
+
+    static constexpr uint64_t FILE_IDLE_TIMEOUT_NS = 5000000000ULL;  // 5 seconds in nanoseconds
+
+#ifdef __SWITCH__
+    mutable ams::os::Mutex m_mutex{false};  // Mutex for thread-safe logging
+#else
+    mutable std::mutex m_mutex;  // Mutex for thread-safe logging (PC)
+#endif
+};
+
+// =============================================================================
+// Global Logger Instance
+// =============================================================================
+
+/**
+ * @brief Global logger instance
+ *
+ * Use this for all logging throughout the sysmodule. Initialize once
+ * at startup with g_logger.init(config.debug).
+ */
+extern Logger g_logger;
+
+// =============================================================================
+// Logging Macros
+// =============================================================================
+
+/**
+ * @brief Log an error message
+ *
+ * Always logged when debug is enabled (level >= 0).
+ *
+ * @note Uses GNU extension ##__VA_ARGS__ to handle zero variadic arguments.
+ *       This is well-supported by GCC, Clang, and devkitPro toolchains.
+ */
+#define LOG_ERROR(fmt, ...) \
+    do { \
+        if (potluck::debug::g_logger.should_log(potluck::debug::LogLevel::Error)) { \
+            potluck::debug::g_logger.log(potluck::debug::LogLevel::Error, fmt, ##__VA_ARGS__); \
+        } \
+    } while(0)
+
+/**
+ * @brief Log a warning message
+ *
+ * Logged when debug level >= 1.
+ */
+#define LOG_WARN(fmt, ...) \
+    do { \
+        if (potluck::debug::g_logger.should_log(potluck::debug::LogLevel::Warning)) { \
+            potluck::debug::g_logger.log(potluck::debug::LogLevel::Warning, fmt, ##__VA_ARGS__); \
+        } \
+    } while(0)
+
+/**
+ * @brief Log an info message
+ *
+ * Logged when debug level >= 2.
+ */
+#define LOG_INFO(fmt, ...) \
+    do { \
+        if (potluck::debug::g_logger.should_log(potluck::debug::LogLevel::Info)) { \
+            potluck::debug::g_logger.log(potluck::debug::LogLevel::Info, fmt, ##__VA_ARGS__); \
+        } \
+    } while(0)
+
+/**
+ * @brief Log a verbose debug message
+ *
+ * Logged when debug level >= 3.
+ */
+#define LOG_VERBOSE(fmt, ...) \
+    do { \
+        if (potluck::debug::g_logger.should_log(potluck::debug::LogLevel::Verbose)) { \
+            potluck::debug::g_logger.log(potluck::debug::LogLevel::Verbose, fmt, ##__VA_ARGS__); \
+        } \
+    } while(0)
+
+} // namespace potluck::debug

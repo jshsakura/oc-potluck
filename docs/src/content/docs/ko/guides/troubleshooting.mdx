@@ -1,0 +1,36 @@
+---
+title: "문제 해결"
+description: "설치·방 검색·네트워크·연결 끊김을 점검합니다."
+---
+
+## 증상부터 확인
+
+| 증상 | 먼저 볼 항목 |
+| --- | --- |
+| 오버레이 없음 | nx-ovlloader·메뉴, `switch/.overlays/potluck.ovl`, 단축키 |
+| 모듈 없음·다른 LDN 모듈 표시 | 같은 릴리스 모듈+오버레이, 재부팅, LDN 자동 실행 하나만 활성화 |
+| 원격인데 시험 없음 | 빈 서버 주소는 로컬 동작. 중계 주소 입력 |
+| 서버 시험 시간 초과 | 주소·포트, Docker 매핑, 방화벽, TCP 포트 전달, 공인 IP·CGNAT |
+| 시험 성공인데 방 없음 | 같은 서버·채널·게임 버전, 모드 변경 후 게임 재시작, 로컬 통신 메뉴 |
+| 방 발견 후 끊김 | P2P부터 끄고 기기 로그·안정성·게임 호환성 확인 |
+| 로컬 방 없음 | 같은 LAN, AP 격리·게스트 VLAN, LAN TCP·UDP 11452 |
+| NAS 재시작 반복 | 두 서비스 로그, Redis 상태, CPU 아키텍처, 메모리 한도, 볼륨 권한 |
+
+## 주소와 프로토콜 구분
+
+같은 LAN은 NAS 내부 IP, 외부는 연결 가능한 공인 IP·DDNS를 사용합니다. Hairpin NAT가 없으면 내부에서 공인 주소로 접속할 때 실패할 수 있습니다. 이중 NAT·CGNAT는 라우터 포트 전달만으로 해결되지 않을 수 있습니다.
+
+30456은 HTTP가 아닌 중계 프로토콜입니다. 브라우저·Web Station·HTTP 역방향 프록시·QuickConnect로 이 TCP 서비스를 제공하거나 시험할 수 없습니다. 기기 주소에 `https://`를 붙이지 마세요. [NAS 네트워크](../synology/)를 확인하세요.
+
+## 보고 자료 모으기
+
+디버그 레벨 2를 잠시 켜고 한 번 재현 후 끕니다. `config/potluck/potluck.log`에서 그때 추가된 부분과 필요한 Atmosphere 보고서를 모으세요. 모듈·오버레이·서버 버전, 게임·버전, 모드, P2P, 채널 일치 여부, 네트워크 구성, 재현 순서를 기록합니다. 공개 전에 개인정보와 비공개 채널·주소를 지우세요.
+
+서버 배포 폴더에서 상태·최근 로그를 확인합니다.
+
+```sh
+docker compose -f compose.nas.yml ps
+docker compose -f compose.nas.yml logs --tail=100 ldn-server redis
+```
+
+지원 목록·연결 시험만으로 게임 세션이 검증되지는 않습니다. 어느 단계에서 실패하는지 좁히고 [이슈](https://github.com/jshsakura/oc-potluck/issues)를 남기세요. 설치·부팅 문제는 [복구](../maintenance/)를 따르세요.

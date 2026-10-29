@@ -1,0 +1,88 @@
+---
+title: "Run the relay from source"
+description: "Build the relay with .NET and connect it to Redis without requiring Docker."
+---
+
+Docker is optional. Build `server/src/LanPlayServer.csproj` and run the relay directly. This guide uses **Linux with the .NET runtime**. For a container deployment, follow [Docker Compose](../relay-server/) or [Synology/NAS](../synology/).
+
+## Requirements
+
+- Git and the **[.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0)**. The project targets `net10.0`. A separate host running the published DLL needs the .NET 10 runtime.
+- **Redis with JSON commands**, such as Redis 8 or Redis Stack with RedisJSON. The current server connects to Redis and calls `JSON.SET` during startup; Redis is not optional.
+- A TCP port reachable by participants. The default relay port is `30456`.
+
+Redis can also run without Docker. Follow the [Redis installation guide](https://redis.io/docs/latest/operate/oss_and_stack/install/install-stack/). Bind it to `127.0.0.1` on the same host and keep protected mode enabled. Use a dedicated instance: the relay initializes the `ldn` and `games` statistics keys during startup.
+
+```sh
+redis-cli -h 127.0.0.1 -p 6379 ping
+redis-cli -h 127.0.0.1 -p 6379 COMMAND INFO JSON.SET JSON.GET
+```
+
+Expect `PONG` and information for both JSON commands. A successful ping alone does not establish JSON support.
+
+## Get the source and publish
+
+```sh
+git clone https://github.com/jshsakura/oc-potluck.git
+cd oc-potluck
+dotnet --version
+dotnet publish server/src/LanPlayServer.csproj -c Release \
+  -p:PublishAot=false -p:UseAppHost=false --self-contained false \
+  -o ./output/relay
+```
+
+The project defaults to Native AOT. This command instead publishes a runtime-dependent DLL so you can start without a native compiler toolchain. Keep the **whole** `output/relay/` directory: dependencies and `gamelist.json` are needed alongside `LanPlayServer.dll`. See the [.NET publishing reference](https://learn.microsoft.com/en-us/dotnet/core/tools/dotnet-publish).
+
+For production, build a reviewed release tag or commit. The module's devkitPro toolchain and Atmosphere submodules are not needed to build the relay.
+
+## Run with environment variables
+
+```sh
+cd output/relay
+mkdir -p data
+LDN_HOST=0.0.0.0 \
+LDN_PORT=30456 \
+LDN_REDIS_HOST=127.0.0.1 \
+LDN_REDIS_PORT=6379 \
+LDN_GAMELIST_PATH="$PWD/gamelist.json" \
+IP_BAN_FILE_PATH="$PWD/data/bannedips.txt" \
+dotnet ./LanPlayServer.dll
+```
+
+Run as an unprivileged user who can write to `data/`. The server creates a missing ban file, but its parent directory must already exist. This runs in the current terminal; stop with `Ctrl+C`.
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `LDN_HOST` | `0.0.0.0` | Actual host address on which the relay listens |
+| `LDN_PORT` | `30456` | Relay TCP port, without Docker port mapping |
+| `LDN_GAMELIST_PATH` | `gamelist.json` | Game-name catalog; relative paths use the working directory |
+| `LDN_REDIS_HOST`, `LDN_REDIS_PORT` | `127.0.0.1`, `6379` | Redis endpoint with JSON support |
+| `LDN_REDIS_SOCKET` | Empty | Use this Unix socket instead of the Redis host and port |
+| `IP_BAN_FILE_PATH` | `bannedips.txt` | Persistent IP ban-list path |
+| `LDN_STATUS_HOST`, `LDN_STATUS_PORT` | `127.0.0.1`, `0` | Read-only `/rooms` status API; port `0` disables it |
+
+`LDN_BIND_IP` and `LDN_SERVER_IMAGE` belong to Compose, not the server process. Use `LDN_HOST` when running directly. The process does not automatically load `.env`; pass environment variables through your shell or service manager.
+
+## Connect and operate
+
+Enter the host's LAN IP or reachable external hostname and port in PotLuck. Allow only the relay TCP port required by participants through the firewall/router. Redis 6379 and the status API do not need to be public. See [NAS networking](../synology/) for forwarding, CGNAT and proxy details.
+
+For status reporting, add `LDN_STATUS_PORT=30457` and retain the default loopback bind address. Expose only the read-only API through an HTTPS reverse proxy if needed. This HTTP API is separate from the gameplay relay TCP port.
+
+For continuous operation, configure a service manager such as systemd with an explicit working directory, environment, service user, restart policy, memory cap and log rotation. Stop gracefully with `SIGTERM` or `Ctrl+C`. Tell players before updates, back up the ban file and settings, then stop the process. Publish to a new directory rather than replacing files beneath a running process so rollback remains straightforward.
+
+## Publish with Native AOT
+
+To distribute a binary without requiring the .NET runtime, use the project's default Native AOT deployment. This requires native build tools matching the target OS/CPU. Check the [Native AOT prerequisites](https://learn.microsoft.com/en-us/dotnet/core/deploying/native-aot/) first.
+
+From the repository root, on a matching Ubuntu/Debian Linux x64 build host and target:
+
+```sh
+dotnet publish server/src/LanPlayServer.csproj -c Release \
+  -r linux-x64 -p:PublishAot=true -o ./output/relay-aot
+cd output/relay-aot
+# Set the Redis and path environment variables described above before running.
+./LanPlayServer
+```
+
+ARM64 Linux uses `linux-arm64`; Alpine requires the appropriate `linux-musl-*` RID. These are not interchangeable. Deploy `gamelist.json` with the binary and install the target OS runtime libraries. Direct hosting does not change channel security: channels separate discovery, without transport encryption or user authentication.

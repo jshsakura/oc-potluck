@@ -1,0 +1,41 @@
+---
+title: "Installation"
+description: "Install with the app or release ZIP, then verify the module."
+---
+
+## Before you begin
+
+Prepare Atmosphere, an SD card backup, and a game with local wireless play. For the overlay, install nx-ovlloader and a menu such as Ultrahand. Close the game before changes. Keep **only one LDN interception module enabled**.
+
+## Install with the app
+
+1. Download `potluck-installer.nro` from [Releases](https://github.com/jshsakura/oc-potluck/releases/latest).
+2. Copy it to `switch/` on the SD card and open it in the Homebrew Menu.
+3. Choose Install. Keep the network and SD card available until checking and replacement finish.
+4. Restart the console. Open the overlay menu (normally **L + D-Pad Down + Right Stick Click**) and choose **potluck.**
+
+The installer disables ldn_mitm's autostart flag when found and records that change for restoration on uninstall. It need not remain running during play.
+
+## Install a ZIP manually
+
+1. Download `potluck-v*.zip` from Releases. Back up an existing configuration.
+2. Extract the SD layout to the card root, merging directories. Use the module and overlay from the **same release**.
+3. If ldn_mitm is installed, remove only `atmosphere/contents/4200000000000010/flags/boot2.flag` to disable autostart. Keep its directory for later restoration.
+4. Restart and open the PotLuck overlay.
+
+```text
+atmosphere/contents/4200000000504C4B/exefs.nsp
+atmosphere/contents/4200000000504C4B/main.npdm
+atmosphere/contents/4200000000504C4B/flags/boot2.flag
+atmosphere/contents/4200000000504C4B/config.ini
+switch/.overlays/potluck.ovl
+switch/potluck-installer.nro
+```
+
+The module creates default `config.ini` on first boot if missing. The hidden `.overlays` directory belongs under `switch/`; avoid an extra outer folder around the SD layout.
+
+## Verify and start
+
+The overlay must report a running module, rather than another LDN module or an unavailable service. For local play, choose Local and connect both consoles to the same LAN. For remote play, enter the relay address/port and run the connection test. **Restart the game after changing modes.**
+
+Continue with [your first room](../overlay/), [updates and recovery](../maintenance/) or [troubleshooting](../troubleshooting/).

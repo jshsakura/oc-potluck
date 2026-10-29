@@ -1,0 +1,73 @@
+---
+title: API 레퍼런스
+description: potluck API 문서
+---
+
+
+이 섹션은 potluck 모듈의 API 문서를 담고 있습니다.
+
+## 프로토콜
+
+LDN 중계 프로토콜의 wire 형식 타입과 인코딩/디코딩입니다.
+
+- **[프로토콜 레퍼런스](/oc-potluck/ko/reference/protocol)**: 패킷 종류, 구조체, 바이트 순서, 시그널링 의미
+
+## IPC 서비스
+
+모듈이 노출하는 IPC 명령 인터페이스입니다.
+
+- **[IPC 명령](/oc-potluck/ko/reference/ipc-commands)**: `ldn:u` MITM 명령, `potluck` 설정 서비스 명령(0-30), 데이터 구조 전체 레퍼런스
+
+## 주요 소스 모듈
+
+### 네트워크 (`sysmodule/source/network/`)
+
+| 모듈 | 설명 |
+|--------|-------------|
+| TcpClient | TCP keepalive와 정상 종료를 지원하는 BSD 소켓 래퍼 |
+| Client | 상위 수준의 LDN 중계 프로토콜 클라이언트 |
+| ConnectionState | State machine: Disconnected → Connecting → Connected → Ready |
+| ReconnectManager | 첫 재시도는 빠르게(200ms) 하고 이후 지수 백오프와 지터를 적용 |
+
+### LDN (`sysmodule/source/ldn/`)
+
+| 모듈 | 설명 |
+|--------|-------------|
+| ICommunicationService | LDN MITM 핵심 구현 (CreateNetwork, Scan, Connect 등) |
+| LdnStateMachine | CommState 전이 (None → Initialized → AccessPoint/Station → Created/Connected) |
+| LdnPacketDispatcher | 수신 패킷을 알맞은 핸들러로 전달 |
+| LdnSessionHandler | 세션 수명 관리 |
+| LdnProxyHandler | ProxyData/ProxyConfig를 통한 프록시 데이터 라우팅 |
+| LdnSharedState | MITM과 설정 서비스가 공유하는 상태 |
+| LdnNodeMapper | 노드 ID와 IP 주소를 서로 매핑 |
+
+### BSD 프록시 (`sysmodule/source/bsd/`)
+
+| 모듈 | 설명 |
+|--------|-------------|
+| ProxySocket | 가로챈 BSD 소켓 (bind/connect/sendto/recvfrom) |
+| ProxySocketManager | 소켓 레지스트리, 포트 할당, 브로드캐스트 팬아웃 라우팅 |
+| EphemeralPortPool | 동적 포트 할당 (49152-65535) |
+
+### P2P (`sysmodule/source/p2p/`)
+
+| 모듈 | 설명 |
+|--------|-------------|
+| P2pProxyServer | 들어오는 P2P 연결을 수신 |
+| P2pProxyClient | 피어 프록시 서버에 연결 |
+| UpnpPortMapper | UPnP 포트 포워딩 검색과 매핑 |
+
+### 설정 (`sysmodule/source/config/`)
+
+| 모듈 | 설명 |
+|--------|-------------|
+| ConfigManager | 실패 시 기본값을 쓰는 고정 버퍼 INI 파서 |
+| ConfigIpcService | potluck IPC 서비스 (명령 31개, 0-30) |
+
+### 프로토콜 (`sysmodule/source/protocol/`)
+
+| 모듈 | 설명 |
+|--------|-------------|
+| types.hpp | `static_assert` 크기 검증이 있는 모든 wire 형식 구조체 |
+| relay_protocol.hpp | 패킷 인코딩/디코딩 함수 |
+| packet_buffer.hpp | TCP 스트림 재조립과 버퍼링 |

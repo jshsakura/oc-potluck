@@ -1,0 +1,10 @@
+**
+!server/
+!server/src/
+!server/src/**
+!web/
+!web/**
+web/DESIGN.md
+web/og-image.svg
+server/src/bin
+server/src/obj

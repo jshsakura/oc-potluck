@@ -1,0 +1,41 @@
+---
+title: "설치 가이드"
+description: "설치 앱 또는 ZIP으로 설치하고 모듈을 확인합니다."
+---
+
+## 설치 전 준비
+
+Atmosphere와 SD 카드 백업, 로컬 통신 게임을 준비하세요. 오버레이에는 nx-ovlloader와 Ultrahand 같은 메뉴가 필요합니다. 작업 전에 게임을 종료하고 **LDN 모듈은 하나만 활성화**하세요.
+
+## 설치 앱 사용
+
+1. [릴리스](https://github.com/jshsakura/oc-potluck/releases/latest)에서 `potluck-installer.nro`를 받습니다.
+2. SD 카드의 `switch/` 폴더에 넣고 홈브루 메뉴에서 실행합니다.
+3. 설치를 선택합니다. 다운로드·검증·파일 교체가 끝날 때까지 네트워크와 SD 카드를 유지하세요.
+4. 기기를 재부팅합니다. 오버레이 메뉴(기본 **L + 십자키 아래 + 오른쪽 스틱 클릭**)에서 **potluck.** 을 고릅니다.
+
+설치 앱은 기존 ldn_mitm을 찾으면 자동 실행 플래그를 끄고 삭제할 때 복원하도록 기록합니다. 게임 중에는 앱을 켜 둘 필요가 없습니다.
+
+## ZIP으로 직접 설치
+
+1. 릴리스의 `potluck-v*.zip`을 받습니다. 기존 설정은 백업하세요.
+2. SD 카드 루트에 풀어 폴더를 병합합니다. 모듈과 오버레이는 **같은 릴리스**를 쓰세요.
+3. ldn_mitm이 있다면 `atmosphere/contents/4200000000000010/flags/boot2.flag` 파일만 지워 자동 실행을 끕니다. 기존 폴더는 보관할 수 있습니다.
+4. 재부팅하고 PotLuck 오버레이를 엽니다.
+
+```text
+atmosphere/contents/4200000000504C4B/exefs.nsp
+atmosphere/contents/4200000000504C4B/main.npdm
+atmosphere/contents/4200000000504C4B/flags/boot2.flag
+atmosphere/contents/4200000000504C4B/config.ini
+switch/.overlays/potluck.ovl
+switch/potluck-installer.nro
+```
+
+`config.ini`가 없으면 첫 부팅 때 기본값으로 만듭니다. 숨김 폴더 `.overlays`는 `switch/` 아래에 있어야 합니다. 배포 ZIP 바깥의 폴더까지 중첩해서 넣지 마세요.
+
+## 설치 확인과 첫 실행
+
+오버레이에서 모듈 실행 여부를 확인하세요. 다른 LDN 모듈이 실행 중이거나 서비스를 찾지 못하면 설치·충돌을 먼저 해결합니다. 로컬은 같은 LAN에서 로컬 모드를 선택합니다. 원격은 서버 주소·포트 저장 후 연결 시험을 합니다. **모드 변경 후에는 게임을 다시 시작하세요.**
+
+[첫 플레이](../overlay/), [업데이트·삭제·복구](../maintenance/), [문제 해결](../troubleshooting/)로 이어집니다.

@@ -1,0 +1,37 @@
+---
+title: "Play and use the overlay"
+description: "Create a first room and understand mode changes and status."
+---
+
+## First room: local
+
+1. Connect both consoles to the same LAN/Wi-Fi; avoid guest networks and AP isolation.
+2. Before opening the game, choose **Local** on both consoles. Compatible ldn_mitm peers can join too.
+3. Open the same game/version and its **local wireless** menu. One player hosts; the others join.
+
+Local play needs no Docker server, channel or WAN port forwarding. Discovery broadcasts may not cross routed subnets.
+
+## First room: remote
+
+1. Get a reachable [relay](../relay-server/) address and port from its owner.
+2. Save the same server/port on all consoles. Choose **Remote** and the same channel (empty for public).
+3. Run **Test the server**. Fully close/reopen the game, then host/join through its local wireless menu.
+
+The test measures reachability and latency to the server; it does not prove a game's complete multiplayer path. Begin with P2P off and two players.
+
+## Controls
+
+Open the overlay menu with its configured shortcut, usually **L + D-Pad Down + Right Stick Click**, then choose **potluck.** The top card shows game-list status, connection, room size and available latency. Korean systems use Korean; other systems use English.
+
+| Setting | Purpose | Applies |
+| --- | --- | --- |
+| Mode | Remote, Local, Off | Remote/local: next fully restarted game. Off/enabling after booting off: follow reboot notice |
+| Channel | 8 hex digits for room discovery; empty is public | Match on peers, leave/rejoin after changing |
+| P2P | Optional direct peer traffic | Next room; off by default |
+| Reconnect | Restart relay connection | Immediately; leave the current room first |
+| Server / Port | Relay hostname or IPv4 and TCP port | Save/reconnect as prompted; restart the game for a clean session |
+| Test the server | Probe saved relay | Effective remote mode only |
+
+Settings save automatically. The keypad accepts D-Pad + A or touch; **+ / Save** saves, **B** deletes a character. The installer offers a system keyboard for server entry, diagnostics, language and debug controls.
+
+An empty server address makes Remote operate as Local. Reopening the overlay cannot change a running game's captured mode. Reboot after manual INI edits or installer server changes. See [all settings](../configuration/).

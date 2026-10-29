@@ -1,0 +1,28 @@
+---
+const { data } = Astro.locals.starlightRoute.entry;
+const ko = Astro.locals.starlightRoute.lang === 'ko';
+const { title = data.title, tagline, actions = [] } = data.hero ?? {};
+const lines = title.split('\n');
+---
+<section class="landing-hero" aria-labelledby="_top">
+    <div class="landing-copy">
+        <p class="landing-eyebrow">POTLUCK / LDN MITM</p>
+        <h1 id="_top" data-page-title>{lines.map((line, index) => <Fragment>{index > 0 && <br />}{line}</Fragment>)}</h1>
+        <p class="landing-lead">{tagline}</p>
+        <div class="landing-actions">
+            {actions.map((action, index) => <a class:list={['landing-button', { secondary: index > 0 }]} href={action.link}>{action.text}<span aria-hidden="true">&rarr;</span></a>)}
+        </div>
+        <p class="landing-caption">{ko ? 'LDN MITM · TCP/UDP 게임 통신 지원' : 'Play locally nearby. Use a relay when friends are far away.'}</p>
+    </div>
+    <figure class="landing-network">
+        <figcaption>{ko ? '원격 모드 연결' : 'Together, across networks'}</figcaption>
+        <div class="landing-network-flow">
+            <div class="landing-peer"><span class="landing-peer-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="5"/><path d="M20 21a8 8 0 0 0-16 0"/></svg></span><strong>{ko ? '나' : 'You'}</strong></div>
+            <div class="landing-path"><span>TCP/UDP</span><span aria-hidden="true">&harr;</span></div>
+            <div class="landing-relay"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="10" width="20" height="10" rx="3"/><path d="M6 10V3m12 7V3M7 15h.01M12 15h.01M17 15h.01"/></svg><strong>PotLuck</strong></div>
+            <div class="landing-path"><span>TCP/UDP</span><span aria-hidden="true">&harr;</span></div>
+            <div class="landing-peer"><span class="landing-peer-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="5"/><path d="M20 21a8 8 0 0 0-16 0"/></svg></span><strong>{ko ? '친구' : 'Friend'}</strong></div>
+        </div>
+        <p>{ko ? '중계 서버를 통해 친구의 방을 찾고 게임 통신을 주고받습니다.' : 'LDN MITM · Room discovery and game traffic relay'}</p>
+    </figure>
+</section>

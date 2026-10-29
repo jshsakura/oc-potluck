@@ -1,0 +1,236 @@
+---
+title: IPC 명령
+description: potluck IPC 명령 레퍼런스
+---
+
+
+이 페이지는 potluck이 사용하는 IPC 명령을 설명합니다.
+
+## 표준 LDN 명령
+
+potluck이 가로채는 표준 LDN IPC 명령입니다.
+
+### 서비스: ldn:u
+
+| 명령 | 이름 | 설명 |
+|-----|------|-------------|
+| 0 | CreateUserLocalCommunicationService | 통신 세션을 만듭니다 |
+| 1 | *CreateClientProcessMonitor* | 내부 모니터입니다 (MITM 대상 아님) |
+
+### ICommunicationInterface
+
+| 명령 | 이름 | 설명 |
+|-----|------|-------------|
+| 0 | GetState | 현재 LDN 상태를 가져옵니다 |
+| 1 | GetNetworkInfo | 현재 네트워크 정보를 가져옵니다 |
+| 2 | GetIpv4Address | 로컬 IPv4 주소를 가져옵니다 (wire 형식: 빅 엔디언 uint32) |
+| 3 | GetDisconnectReason | 마지막 연결 해제의 사유를 가져옵니다 |
+| 4 | GetSecurityParameter | 보안 설정을 가져옵니다 |
+| 5 | GetNetworkConfig | 네트워크 설정을 가져옵니다 |
+| 100 | AttachStateChangeEvent | 상태 변경 이벤트 핸들을 가져옵니다 |
+| 101 | GetNetworkInfoLatestUpdate | 갱신 카운터가 포함된 네트워크 정보를 가져옵니다 |
+| 102 | Scan | 사용 가능한 네트워크를 검색합니다 |
+| 103 | ScanPrivate | 비공개 네트워크를 검색합니다 |
+| 104 | SetWirelessControllerRestriction | 무선 컨트롤러를 제한합니다 |
+| 200 | OpenAccessPoint | 네트워크 호스트로 엽니다 |
+| 201 | CloseAccessPoint | 호스트 모드를 닫습니다 |
+| 202 | CreateNetwork | 새 네트워크를 만듭니다 |
+| 203 | CreateNetworkPrivate | 비공개 네트워크를 만듭니다 |
+| 204 | DestroyNetwork | 현재 네트워크를 제거합니다 |
+| 205 | Reject | 연결된 플레이어를 거부합니다 |
+| 206 | SetAdvertiseData | 광고 데이터를 설정합니다 |
+| 207 | SetStationAcceptPolicy | 참가 정책(허용/거부)을 설정합니다 |
+| 208 | AddAcceptFilterEntry | 수락 필터에 항목을 추가합니다 |
+| 209 | ClearAcceptFilter | 수락 필터를 비웁니다 |
+| 300 | OpenStation | 클라이언트로 엽니다 |
+| 301 | CloseStation | 클라이언트 모드를 닫습니다 |
+| 302 | Connect | 네트워크에 연결합니다 |
+| 303 | ConnectPrivate | 비공개 네트워크에 연결합니다 |
+| 304 | Disconnect | 네트워크에서 연결을 해제합니다 |
+| 400 | Initialize | 서비스를 초기화합니다 |
+| 401 | Finalize | 서비스를 종료 처리합니다 |
+| 402 | InitializeSystem2 | 대체 초기화입니다 |
+
+**PIA 참고**: `CreateNetwork`/`Connect` 이후 게임은 `GetIpv4Address()`와 `GetNetworkInfo()`를 따로 호출합니다. 그런 다음 게임은 이 IP를 `NetworkInfo.ldn.nodes[].ipv4_address`와 맞춰 보고 자기 노드 인덱스를 찾습니다. 둘이 맞지 않으면 `FindLocalNodeId()`가 `0xFF`(찾지 못함)를 반환하고 게임은 네트워크를 제거합니다.
+
+## 사용자 정의 설정 명령 (potluck)
+
+독립 `potluck` IPC 서비스는 `smGetService("potluck")`로 직접 사용할 수 있습니다. 오버레이는 이 서비스로 실시간 설정과 상태 표시를 처리합니다.
+
+> **참고**: 독립 `potluck` 서비스의 `GetConnectionStatus`(명령 1)는 현재 항상 `0`(Disconnected)을 반환합니다. 실제 연결 상태는 `CommState` 열거형을 반환하는 `GetLdnState`(명령 24)를 사용하세요.
+
+### 설정 명령 (0-22)
+
+| 명령 | 이름 | 매개변수 | 반환값 | 설명 |
+|-----|------|------------|---------|-------------|
+| 0 | GetVersion | - | char[32] | 모듈 버전 문자열 |
+| 1 | GetConnectionStatus | - | u32 | 서버 연결 상태 (현재 항상 0) |
+| 2 | GetPassphrase | - | char[64] | 현재 방 암호 |
+| 3 | SetPassphrase | char[64] | - | 방 암호를 설정합니다 |
+| 4 | GetServerAddress | - | ServerAddress | 설정된 서버 주소 |
+| 5 | SetServerAddress | ServerAddress | - | 서버 주소를 변경합니다 |
+| 6 | GetLdnMode | - | u32 | 0은 원격, 1은 로컬 |
+| 7 | SetLdnMode | u32 | - | 다음에 시작하는 게임에 원격(0) 또는 로컬(1)을 선택합니다 |
+| 8 | GetUseTls | - | u32 | TLS 플래그 (⚠️ 구현되지 않음, 항상 평문 TCP) |
+| 9 | SetUseTls | u32 | - | TLS를 켜거나 끕니다 (⚠️ 효과 없음) |
+| 10 | GetDebugEnabled | - | u32 | 디버그 로그 플래그 |
+| 11 | SetDebugEnabled | u32 | - | 디버그 로그를 켜거나 끕니다 |
+| 12 | GetDebugLevel | - | u32 | 로그 레벨 (0-3) |
+| 13 | SetDebugLevel | u32 | - | 로그 레벨을 설정합니다 |
+| 14 | GetLogToFile | - | u32 | 파일 로그 플래그 |
+| 15 | SetLogToFile | u32 | - | 파일 로그를 켜거나 끕니다 |
+| 16 | SaveConfig | - | ConfigResult | 설정을 SD 카드에 저장합니다 |
+| 17 | ReloadConfig | - | ConfigResult | SD 카드에서 설정을 다시 불러옵니다 |
+| 18 | GetConnectTimeout | - | u32 | 연결 타임아웃(ms) |
+| 19 | SetConnectTimeout | u32 | - | 연결 타임아웃(ms)을 설정합니다 |
+| 20 | GetPingInterval | - | u32 | Ping 간격(ms) (⚠️ 파싱만 하고 사용하지 않음, ping은 서버가 주도) |
+| 21 | SetPingInterval | u32 | - | Ping 간격(ms)을 설정합니다 (⚠️ 효과 없음) |
+| 22 | IsServiceActive | - | u32 | 서비스 ping (활성이면 1 반환) |
+
+### 런타임 상태 명령 (23-28)
+
+| 명령 | 이름 | 매개변수 | 반환값 | 설명 |
+|-----|------|------------|---------|-------------|
+| 23 | IsGameActive | - | u32 | 게임이 LDN을 사용 중이면 1 반환 |
+| 24 | GetLdnState | - | u32 | 현재 CommState 열거형 값 |
+| 25 | GetSessionInfo | - | SessionInfo | 현재 세션 정보 |
+| 26 | GetLastRtt | - | u32 | 마지막 RTT(ms) |
+| 27 | ForceReconnect | - | - | MITM 재연결을 요청합니다 |
+| 28 | GetActiveProcessId | - | u64 | 실행 중인 게임의 PID |
+
+### P2P 프록시 명령 (29-30)
+
+> **참고**: 명령 29-30은 `potluck` 서비스에서 사용할 수 있지만, `potluck_ipc.c`에 오버레이 클라이언트 스텁이 아직 없습니다.
+
+| 명령 | 이름 | 매개변수 | 반환값 | 설명 |
+|-----|------|------------|---------|-------------|
+| 29 | GetDisableP2p | - | u32 | P2P 프록시가 꺼져 있으면 1 반환 |
+| 30 | SetDisableP2p | u32 | - | P2P 프록시를 켜거나 끕니다 (0=켜기, 1=끄기) |
+
+### MITM 설정 명령 (65000 이상)
+
+LDN MITM 서비스는 `ldn:u`의 명령 65000으로 `LdnConfigService`도 노출합니다. 이 서비스는 `potluck` 명령을 +65000 오프셋으로 그대로 제공하고, 확장 명령 65011-65030을 추가합니다.
+
+| 명령 | 이름 | 설명 |
+|-----|------|-------------|
+| 65000 | (서비스 가져오기) | LdnConfigService 인스턴스를 얻습니다 |
+| 65001 | GetHost | 서버 호스트 이름을 가져옵니다 |
+| 65002 | SetHost | 서버 호스트 이름을 설정합니다 |
+| 65003 | GetPort | 서버 포트를 가져옵니다 |
+| 65004 | SetPort | 서버 포트를 설정합니다 |
+| 65005 | GetUseTls | TLS 설정을 가져옵니다 (⚠️ 구현되지 않음, 항상 평문 TCP) |
+| 65006 | SetUseTls | TLS 설정을 지정합니다 (⚠️ 구현되지 않음) |
+| 65007 | GetConnectTimeout | 연결 타임아웃(ms)을 가져옵니다 |
+| 65008 | SetConnectTimeout | 연결 타임아웃(ms)을 설정합니다 |
+| 65009 | GetPingInterval | Ping 간격(ms)을 가져옵니다 (⚠️ 파싱만 하고 사용하지 않음) |
+| 65010 | SetPingInterval | Ping 간격(ms)을 설정합니다 (⚠️ 효과 없음) |
+| 65011 | GetPassphrase | 방 암호를 가져옵니다 |
+| 65012 | SetPassphrase | 방 암호를 설정합니다 |
+| 65013 | GetLdnMode | LDN 모드를 가져옵니다 |
+| 65014 | SetLdnMode | LDN 모드를 설정합니다 |
+| 65015 | GetUseTls | TLS 상태를 가져옵니다 (65005와 같음) |
+| 65016 | SetUseTls | TLS 상태를 설정합니다 (65006과 같음) |
+| 65017 | GetConnectTimeout | 연결 타임아웃을 가져옵니다 (65007과 같음) |
+| 65018 | SetConnectTimeout | 연결 타임아웃을 설정합니다 (65008과 같음) |
+| 65019 | GetPingInterval | Ping 간격을 가져옵니다 (65009와 같음) |
+| 65020 | SetPingInterval | Ping 간격을 설정합니다 (65010과 같음) |
+| 65021 | GetReconnectDelay | 재연결 지연(ms)을 가져옵니다 |
+| 65022 | SetReconnectDelay | 재연결 지연(ms)을 설정합니다 |
+| 65023 | GetMaxReconnectAttempts | 최대 재연결 시도 횟수를 가져옵니다 |
+| 65024 | SetMaxReconnectAttempts | 최대 재연결 시도 횟수를 설정합니다 (0 = 자동 재연결 끔) |
+| 65025 | GetDebugLevel | 디버그 로그 레벨을 가져옵니다 |
+| 65026 | SetDebugLevel | 디버그 로그 레벨을 설정합니다 |
+| 65027 | GetLogToFile | 파일 로그 상태를 가져옵니다 |
+| 65028 | SetLogToFile | 파일 로그 상태를 설정합니다 |
+| 65029 | SaveConfig | 현재 설정을 파일에 저장합니다 |
+| 65030 | ReloadConfig | 파일에서 설정을 다시 불러옵니다 |
+
+## 데이터 구조
+
+### ConnectionStatus (enum u32)
+
+| 값 | 이름 | 설명 |
+|-------|------|-------------|
+| 0 | Disconnected | 서버에 연결되지 않았습니다 |
+| 1 | Connecting | 연결 중입니다 |
+| 2 | Connected | TCP는 연결되었고 핸드셰이크를 기다립니다 |
+| 3 | Ready | 완전히 연결되어 동작 중입니다 |
+| 4 | Error | 연결 오류가 발생했습니다 |
+
+> **참고**: 독립 `potluck` 서비스에서 `GetConnectionStatus`는 항상 `0`(Disconnected)을 반환합니다. 실제 상태는 `GetLdnState`(명령 24)를 사용하세요.
+
+### LdnState / CommState (enum u32)
+
+| 값 | 이름 | 설명 |
+|-------|------|-------------|
+| 0 | None | 초기화되지 않았습니다 |
+| 1 | Initialized | 서비스가 초기화되었습니다 |
+| 2 | AccessPoint | 호스트 모드가 열렸습니다 |
+| 3 | AccessPointCreated | 네트워크가 만들어졌습니다 |
+| 4 | Station | 클라이언트 모드가 열렸습니다 |
+| 5 | StationConnected | 네트워크에 연결되었습니다 |
+| 6 | Error | 오류 상태입니다 |
+
+### SessionInfo (구조체, 8바이트)
+
+> **중요**: 오버레이의 `SessionInfo`는 일부 SDK처럼 72바이트가 아니라 8바이트뿐입니다. `session_duration_ms`와 `game_name`은 들어 있지 않습니다.
+
+| 오프셋 | 타입 | 이름 | 설명 |
+|--------|------|------|-------------|
+| 0x00 | u8 | node_count | 세션의 플레이어 수 |
+| 0x01 | u8 | max_nodes | 최대 플레이어 수 |
+| 0x02 | u8 | local_node_id | 로컬 노드 ID |
+| 0x03 | u8 | is_host | 호스트이면 1 |
+| 0x04 | u8[4] | reserved | 패딩 |
+
+### ServerAddress (구조체, 68바이트)
+
+| 오프셋 | 타입 | 이름 | 설명 |
+|--------|------|------|-------------|
+| 0x00 | char[64] | host | 서버 호스트 이름 |
+| 0x40 | u16 | port | 서버 포트 |
+| 0x42 | u16 | padding | 예약 |
+
+### ConfigResult (enum u32)
+
+| 값 | 이름 | 설명 |
+|-------|------|-------------|
+| 0 | Success | 작업이 성공적으로 끝났습니다 |
+| 1 | FileNotFound | 설정 파일이 없습니다 |
+| 2 | ParseError | 설정 파일에 문법 오류가 있습니다 |
+| 3 | IoError | 파일 I/O 오류입니다 |
+| 4 | InvalidValue | 설정 값이 범위를 벗어났거나 올바르지 않습니다 |
+
+## 사용 예제 (C)
+
+```c
+// Connect to potluck service directly
+Service cfgService;
+smGetService(&cfgService, "potluck");
+
+// Get LDN state
+u32 state;
+serviceDispatchOut(&cfgService, 24, &state);
+printf("LDN State: %u\n", state);
+
+// Get session info
+struct {
+    u8 node_count;
+    u8 max_nodes;
+    u8 local_node_id;
+    u8 is_host;
+    u8 reserved[4];
+} session_info;
+serviceDispatchOut(&cfgService, 25, &session_info);
+
+// Force reconnect
+serviceDispatch(&cfgService, 27);
+
+// Check P2P status
+u32 p2p_disabled;
+serviceDispatchOut(&cfgService, 29, &p2p_disabled);
+
+// Save config to SD card
+u32 result;
+serviceDispatchOut(&cfgService, 16, &result);
+```

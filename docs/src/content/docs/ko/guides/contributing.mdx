@@ -1,0 +1,18 @@
+---
+title: "기여하기"
+description: "재현 가능한 보고와 DCO 서명이 있는 변경을 제출합니다."
+---
+
+## 문제 보고
+
+[문제 해결](../troubleshooting/)을 읽고 버전·네트워크 구성·재현 순서·관련 로그 일부를 포함하세요. 보안 문제는 공개 이슈 대신 [SECURITY.md](https://github.com/jshsakura/oc-potluck/blob/main/SECURITY.md)를 따르고 개인정보·공격 세부사항을 공개하지 마세요.
+
+## 변경 제출
+
+[CONTRIBUTING.md](https://github.com/jshsakura/oc-potluck/blob/main/CONTRIBUTING.md)를 따릅니다. 변경 범위를 좁히고 동작 차이·검증 결과를 설명하세요. 모든 커밋은 작성자의 Git 설정으로 `git commit -s` DCO 서명을 넣습니다. 다른 사람의 이름을 고정하거나 홍보 문구를 추가하지 않습니다.
+
+모듈 변경은 wire layout 호환성과 공유 확장 힙 384 KB를 지켜야 합니다. 근거 없이 자주 실행되는 경로에 동적 할당을 추가하지 마세요. [빌드 안내](../building/)를 따르고 호스트 테스트와 별도로 실기 플레이를 확인합니다.
+
+## 문서 수정
+
+영어는 `docs/src/content/docs/`, 한국어는 같은 구조의 `ko/` 아래에 있습니다. 사용자 동작이 바뀌면 둘 다 고치고 기본값·적용 시점은 코드와 맞추세요. Compose 원본은 `deploy/compose.nas.yml`이며 사이트 사본은 생성됩니다. 디자인 기준은 `docs/DESIGN.md`입니다.

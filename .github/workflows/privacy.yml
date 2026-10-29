@@ -1,0 +1,30 @@
+name: Privacy
+
+# Blocks real addresses, personal data and secrets in files and commit
+# messages. Real hosts that must never appear go in the PRIVACY_DENYLIST
+# repository secret (comma or newline separated), never in the repo.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    name: Privacy scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Scan tracked files
+        env:
+          PRIVACY_DENYLIST: ${{ secrets.PRIVACY_DENYLIST }}
+        run: python3 scripts/privacy-check.py --all
+      - name: Scan commit messages
+        if: github.event_name == 'pull_request'
+        env:
+          PRIVACY_DENYLIST: ${{ secrets.PRIVACY_DENYLIST }}
+        run: python3 scripts/privacy-check.py --range "${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}"

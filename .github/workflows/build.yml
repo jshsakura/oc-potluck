@@ -1,0 +1,231 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch:
+
+env:
+  # Relay server image the integration tests run against (published by server.yml)
+  SERVER_IMAGE_VERSION: v0.2.9
+
+permissions:
+  contents: write
+  packages: read
+
+jobs:
+  test:
+    name: Tests & Coverage ≥ 80%
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Supported firmware matches Atmosphere-libs
+        run: bash scripts/ci/check-firmware.sh
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential g++ netcat-openbsd
+          pip install gcovr
+          sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
+
+      - name: Run unit tests with coverage
+        run: |
+          bash scripts/ci/run-limited.sh --setup
+          bash scripts/ci/run-limited.sh make -C tests clean
+          bash scripts/ci/run-limited.sh make -C tests -j1 COVERAGE=1 test
+
+      - name: Run installer tests
+        run: |
+          sudo apt-get install -y libminizip-dev zlib1g-dev
+          bash scripts/ci/run-limited.sh bash installer/tests/run.sh
+
+      - name: Build integration tests with coverage
+        run: |
+          bash scripts/ci/run-limited.sh make -C tests/integration clean
+          bash scripts/ci/run-limited.sh make -C tests/integration -j1 COV=1 all
+
+      - name: Start relay server
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cd tests/integration
+          # The published server image (server.yml): building it here would run
+          # dotnet outside the test memory budget, which only covers containers.
+          bash prepare-compose.sh "ghcr.io/${GITHUB_REPOSITORY,,}-server:${SERVER_IMAGE_VERSION}"
+          yq -i '.services[].cgroup_parent = "potluck-ci-tests.slice"' docker-compose.yml
+          echo "$GH_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          docker compose -f docker-compose.yml up -d --no-build
+          for container_id in $(docker compose -f docker-compose.yml ps -q); do
+            pid=$(docker inspect --format '{{.State.Pid}}' "$container_id")
+            cg_path=$(sudo cut -d: -f3 "/proc/$pid/cgroup")
+            case "$cg_path" in
+              /potluck.slice/potluck-ci.slice/potluck-ci-tests.slice/*) ;;
+              *) echo "::error::Test container escaped memory budget"; exit 1 ;;
+            esac
+          done
+          bash ../../scripts/ci/run-limited.sh bash wait-for-server.sh localhost 30456 60
+
+      - name: Run integration tests with coverage
+        run: |
+          cd tests/integration
+          bash ../../scripts/ci/run-limited.sh env INTEGRATION_COMPOSE_FILE="$(pwd)/docker-compose.yml" ./run_integration_tests localhost 30456
+
+      - name: Tear down relay server
+        if: always()
+        run: cd tests/integration && docker compose -f docker-compose.yml down -v
+
+      - name: Enforce per-file coverage ≥ 80%
+        run: bash scripts/ci/run-limited.sh python3 scripts/check-coverage.py --min 80 --root .
+
+      - name: Compute average coverage
+        id: coverage
+        run: |
+          python3 scripts/check-coverage.py --min 0 --root . --json /tmp/cov.json || true
+          python3 <<'PYEOF' > /tmp/avg.txt
+          import json
+          with open('/tmp/cov.json') as f:
+              d = json.load(f)
+          files = [f for f in d.get('files', []) if 'sysmodule/source/' in (f.get('file', f.get('filename', '')))]
+          total_lines = 0
+          total_covered = 0
+          for f in files:
+              lines = f.get('lines', [])
+              if isinstance(lines, list):
+                  total_lines += len(lines)
+                  total_covered += sum(1 for l in lines if l.get('count', 0) > 0)
+          avg = (total_covered / total_lines * 100) if total_lines > 0 else 0
+          print(f'{avg:.1f}')
+          PYEOF
+          echo "percent=$(cat /tmp/avg.txt)" >> $GITHUB_OUTPUT
+
+      # After coverage, since it rebuilds the tests without coverage data.
+      # Leaks, overflows, use after free and undefined behavior fail the job.
+      - name: Run unit tests under sanitizers
+        env:
+          ASAN_OPTIONS: detect_leaks=1
+        run: |
+          bash scripts/ci/run-limited.sh make -C tests clean
+          bash scripts/ci/run-limited.sh make -C tests -j1 test CXX="g++ -fsanitize=address,undefined -fno-sanitize-recover=undefined -fno-omit-frame-pointer"
+
+
+  build:
+    name: Build & Package
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    container: ghcr.io/jshsakura/oc-potluck:latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Fix git safe directory
+        run: |
+          git config --global --add safe.directory '*'
+          git symbolic-ref HEAD refs/heads/"${GITHUB_REF_NAME:-develop}" 2>/dev/null || true
+
+      - name: Build sysmodule + overlay + dist ZIP
+        env:
+          DEVKITPRO: /opt/devkitpro
+        run: WORKSPACE_DIR="${GITHUB_WORKSPACE}" bash "${GITHUB_WORKSPACE}/scripts/ci/container-tasks.sh" build
+
+      - name: Upload release ZIP
+        uses: actions/upload-artifact@v7
+        with:
+          name: potluck-release-${{ github.sha }}
+          path: potluck-release.zip
+
+      - name: Upload debug symbols
+        uses: actions/upload-artifact@v7
+        with:
+          name: potluck-debug-${{ github.sha }}
+          path: |
+            sysmodule/potluck.elf
+            sysmodule/potluck.nso
+          if-no-files-found: warn
+
+  pre-release:
+    name: Create Pre-Release
+    if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
+    runs-on: ubuntu-latest
+    needs: build
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Download release ZIP
+        uses: actions/download-artifact@v8
+        with:
+          name: potluck-release-${{ github.sha }}
+          path: release
+
+      - name: Download debug symbols
+        uses: actions/download-artifact@v8
+        with:
+          name: potluck-debug-${{ github.sha }}
+          path: debug
+
+      - name: Get short SHA
+        id: sha
+        run: echo "short=$(echo ${{ github.sha }} | cut -c1-7)" >> $GITHUB_OUTPUT
+
+      - name: Delete existing pre-release
+        run: |
+          gh release delete dev --yes || true
+          git push origin :refs/tags/dev || true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create Pre-Release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: dev
+          name: "Development Build (${{ steps.sha.outputs.short }})"
+          prerelease: true
+          body: |
+            ## Development Build
+
+            **Commit:** ${{ github.sha }}
+            **Branch:** develop
+            **Date:** ${{ github.event.head_commit.timestamp }}
+
+            ---
+
+            ### WARNING
+
+            This is an automatic development build. **No guarantee of functionality.**
+
+            These builds are automatically generated on each commit to the develop branch and may
+            contain bugs, incomplete features, or regressions.
+
+            **Use at your own risk.**
+
+            ---
+
+            ### Installation
+
+            1. Download the ZIP below
+            2. Extract to the root of your SD card
+            3. Reboot your Switch
+            4. Config file will be created automatically on first boot
+
+            ### Files
+
+            - `potluck-release.zip` - Complete package (sysmodule + overlay + config)
+            - `potluck.elf` / `potluck.nso` - Debug symbols
+          files: |
+            release/potluck-release.zip
+            debug/potluck.elf

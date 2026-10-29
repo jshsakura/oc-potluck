@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# potluck commit-msg hook: keep real addresses, personal data and secrets out of commit messages.
+# Install: python3 scripts/hooks/install.py
+set -euo pipefail
+cd "$(git rev-parse --show-toplevel)"
+python3 scripts/privacy-check.py --message "$1"

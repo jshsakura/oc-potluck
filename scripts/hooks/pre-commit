@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# potluck pre-commit hook
+# Always: no real addresses, personal data or secrets in staged files.
+# With POTLUCK_RUN_TESTS=1: unit tests pass + per-file coverage >= 80%.
+# The tests run inside the Docker test container (devkitpro/devkita64).
+# Install: python3 scripts/hooks/install.py
+#          or: cp scripts/hooks/pre-commit .git/hooks/pre-commit
+
+set -euo pipefail
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+cd "$REPO_ROOT"
+
+MIN_COVERAGE="${MIN_COVERAGE:-80}"
+
+echo "=== Pre-commit: checking for real addresses, personal data and secrets ==="
+python3 scripts/privacy-check.py --staged
+
+[ "${POTLUCK_RUN_TESTS:-0}" = 1 ] || exit 0
+
+echo "=== Pre-commit: running unit tests with coverage in Docker ==="
+docker compose run --rm test
+
+echo ""
+echo "=== Pre-commit: checking coverage >= ${MIN_COVERAGE}% ==="
+docker compose run --rm --entrypoint python3 test /workspace/scripts/check-coverage.py --min "$MIN_COVERAGE" --root /workspace
+
+echo ""
+echo "=== Pre-commit: all checks passed ==="

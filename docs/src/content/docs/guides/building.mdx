@@ -1,0 +1,37 @@
+---
+title: "Build from source"
+description: "Use the project Docker builder and bounded host tests."
+---
+
+## Build the device components
+
+Use the Docker builder so devkitPro, Atmosphere libraries and overlay dependencies match the project. Do not build the device target with the host compiler.
+
+```sh
+git clone --recursive https://github.com/jshsakura/oc-potluck.git
+cd oc-potluck
+docker compose run --rm build
+```
+
+The builder produces the module, overlay and SD layout in `output/`. The installer has a separate build described in [installer/BUILD.md](https://github.com/jshsakura/oc-potluck/blob/main/installer/BUILD.md). Packaging details are defined by the current Makefiles and release workflow; use release artifacts for normal installation.
+
+## Tests and resource limits
+
+The repository test service runs serially under a 4 GiB container memory cap with no additional swap:
+
+```sh
+docker compose run --rm test
+```
+
+Before running tests, verify containment covers the whole process tree. Do not launch parallel test jobs outside a shared aggregate 4 GiB budget. For direct host suites on this machine, use `scripts/ci/run-limited.sh`, which verifies the live shared cgroup limit before starting. Never substitute a per-process address-space limit for an aggregate limit.
+
+Unit tests do not establish device gameplay compatibility. For hardware validation include room creation/join, gameplay traffic, reconnect, disconnect and game exit. Debugger presets and instructions live in [scripts/debugger](https://github.com/jshsakura/oc-potluck/tree/main/scripts/debugger).
+
+## Build this website
+
+```sh
+npm ci --prefix docs
+bash scripts/ci/run-limited.sh npm run build --prefix docs
+```
+
+The standard static build includes a bilingual search index and downloads the canonical Compose example from the same checkout. No Doxygen toolchain is needed for user guides. Developer API generation is a separate optional task described in [docs/README.md](https://github.com/jshsakura/oc-potluck/blob/main/docs/README.md).

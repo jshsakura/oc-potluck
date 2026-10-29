@@ -1,0 +1,544 @@
+---
+title: 중계 프로토콜
+description: LDN 중계 프로토콜 wire 형식 레퍼런스
+---
+
+
+이 페이지는 기기의 모듈과 중계 서버가 통신할 때 사용하는 LDN 중계 프로토콜을 설명합니다.
+
+## 개요
+
+LDN 중계 프로토콜은 TCP 위에서 동작하는 바이너리 프로토콜입니다. 여러 바이트로 이루어진 정수는 모두 **리틀 엔디언**이며, 이는 x86/x64(서버)와 ARM(기기)의 기본 바이트 순서와 같습니다.
+
+**중요**: 이 프로토콜은 C# 서버(`LdnServer/Network/`)와 바이트 단위로 호환되어야 합니다. C# 서버는 `[StructLayout(LayoutKind.Sequential)]`를 **`Pack=1` 없이** 사용하므로 `int32` 필드가 4바이트 경계에 정렬됩니다. 자세한 내용은 [바이트 순서와 패딩](#바이트-순서와-패딩)을 참고하세요.
+
+## 패킷 구조
+
+모든 패킷은 12바이트 `LdnHeader`로 시작합니다.
+
+```
+┌──────────────────────────────────────────────────┐
+│ LdnHeader (12 bytes)                             │
+├──────────┬────────┬─────────┬──────────┬─────────┤
+│ Magic    │ Type   │ Version │ Reserved │DataSize │
+│ 4 bytes  │ 1 byte │ 1 byte  │ 2 bytes  │ 4 bytes │
+│ 0x4E444C52│ 0-255  │    1    │   0x00   │ 0-N     │
+└──────────┴────────┴─────────┴──────────┴─────────┘
+```
+
+| 필드 | 오프셋 | 크기 | 설명 |
+|-------|--------|------|-------------|
+| `magic` | 0x00 | 4 | 프로토콜 매직: `0x4E444C52` (LE 기준 "RLDN") |
+| `type` | 0x04 | 1 | `PacketId` 열거형의 패킷 종류 |
+| `version` | 0x05 | 1 | 프로토콜 버전 (반드시 `1`) |
+| `reserved` | 0x06 | 2 | `data_size`를 4바이트 경계에 맞추기 위한 패딩 |
+| `data_size` | 0x08 | 4 | 페이로드 크기(바이트, 부호 있는 int32, 0일 수 있음) |
+
+**중요**: 헤더는 10바이트가 아니라 **12바이트**입니다. 오프셋 0x06의 `reserved` 필드가 `data_size`를 오프셋 0x08의 4바이트 경계에 맞춰 줍니다. 이는 C#의 `StructLayout(LayoutKind.Sequential, Size=0xA)`와 일치하며, `Size=0xA`는 마샬링에만 영향을 줄 뿐 구조체 내부 배치에는 영향을 주지 않습니다.
+
+## 패킷 종류
+
+### 세션 관리 (0-1)
+
+| 값 | 이름 | 방향 | 설명 |
+|-------|------|-----------|-------------|
+| 0 | `Initialize` | C→S | 클라이언트가 세션 ID와 MAC 주소를 보냅니다 |
+| 1 | `Passphrase` | C→S | 비공개 방 필터링용 방 암호입니다 |
+
+### 액세스 포인트 작업 (2-9)
+
+| 값 | 이름 | 방향 | 설명 |
+|-------|------|-----------|-------------|
+| 2 | `CreateAccessPoint` | C→S | 공개 네트워크 세션을 만듭니다 |
+| 3 | `CreateAccessPointPrivate` | C→S | 비공개(암호) 세션을 만듭니다 |
+| 4 | `ExternalProxy` | S→C | 외부 프록시 모드를 설정합니다 |
+| 5 | `ExternalProxyToken` | S→C | 외부 프록시 인증 토큰입니다 |
+| 6 | `ExternalProxyState` | S→C | 외부 프록시 상태 갱신입니다 |
+| 7 | `SyncNetwork` | S→C | 네트워크 상태를 클라이언트에 동기화합니다 |
+| 8 | `Reject` | C→S | 호스트가 플레이어를 거부합니다 |
+| 9 | `RejectReply` | S→C | 서버가 거부를 확인합니다 |
+
+### 네트워크 검색 (10-16)
+
+| 값 | 이름 | 방향 | 설명 |
+|-------|------|-----------|-------------|
+| 10 | `Scan` | C→S | 사용 가능한 네트워크를 요청합니다 |
+| 11 | `ScanReply` | S→C | 검색된 네트워크 하나입니다 |
+| 12 | `ScanReplyEnd` | S→C | 검색 결과의 끝입니다 |
+| 13 | `Connect` | C→S | 네트워크에 참가합니다 |
+| 14 | `ConnectPrivate` | C→S | 비공개 네트워크에 참가합니다 |
+| 15 | `Connected` | S→C | 연결이 확인되었습니다 |
+| 16 | `Disconnect` | Both | 연결 해제 알림입니다 |
+
+### 프록시 작업 (17-21)
+
+| 값 | 이름 | 방향 | 설명 |
+|-------|------|-----------|-------------|
+| 17 | `ProxyConfig` | S→C | 프록시 설정(LDN 서브넷)을 구성합니다 |
+| 18 | `ProxyConnect` | S→C | 프록시를 통해 들어오는 P2P 연결입니다 |
+| 19 | `ProxyConnectReply` | S→C | 프록시 연결 결과입니다 |
+| 20 | `ProxyData` | Both | 프록시를 통한 게임 데이터 중계입니다 |
+| 21 | `ProxyDisconnect` | Both | 프록시 연결을 닫습니다 |
+
+### 호스트 제어 (22-23)
+
+| 값 | 이름 | 방향 | 설명 |
+|-------|------|-----------|-------------|
+| 22 | `SetAcceptPolicy` | C→S | 수락 정책(허용/거부)을 변경합니다 |
+| 23 | `SetAdvertiseData` | C→S | 세션 광고 데이터를 갱신합니다 |
+
+### 유틸리티 (254-255)
+
+| 값 | 이름 | 방향 | 설명 |
+|-------|------|-----------|-------------|
+| 254 | `Ping` | Both | 타임스탬프가 담긴 keepalive입니다 |
+| 255 | `NetworkError` | S→C | 오류 알림입니다 |
+
+## 패킷 시그널링
+
+모든 패킷이 `WaitForResponse`를 깨우는 것은 아닙니다. 다음 표는 어떤 패킷 종류가 `m_response_event`를 신호하는지 보여 줍니다.
+
+| 이벤트 신호 여부 | 패킷 종류 |
+|---|---|
+| **예** | `Connected` (15), `ScanReply` (11), `ScanReplyEnd` (12), `RejectReply` (9), `ProxyConnectReply` (19), `NetworkError` (255) |
+| **아니요** | `ProxyConfig` (17), `ProxyData` (20), `ProxyConnect` (18), `ExternalProxy` (4), `SyncNetwork` (7), `Ping` (254) |
+
+이렇게 하면 불필요한 깨어남을 막을 수 있어, `ProxyConfig`가 `Connected`보다 먼저 도착해도 더 이상 잘못된 타임아웃이 발생하지 않습니다.
+
+## 인증 흐름
+
+```
+Client                                     Server
+  │                                          │
+  │──── Passphrase (1) ─────────────────────▶│
+  │     (passphrase or empty for public)     │
+  │                                          │
+  │──── Initialize (0) ─────────────────────▶│
+  │     (session_id, mac_address)            │
+  │                                          │
+  │◀──── ProxyConfig (17) ──────────────────│
+  │     (proxy_ip, proxy_subnet_mask)        │
+  │                                          │
+  │◀──── Connected (15) ─────────────────────│
+  │     (NetworkInfo + node assignment)      │
+```
+
+`Connected` 이후 클라이언트는 주기적으로 `Ping`(254)을 보내고 `SyncNetwork`(7) 갱신을 받습니다.
+
+## 패킷 정의
+
+### Initialize (0)
+
+```cpp
+struct InitializeMessage {       // 22 bytes (0x16)
+    SessionId  id;               // 16 bytes: client session ID (zeros = new)
+    MacAddress mac_address;      // 6 bytes: client MAC (zeros = assign new)
+};
+```
+
+### Passphrase (1)
+
+```cpp
+struct PassphraseMessage {       // 128 bytes (0x80)
+    uint8_t passphrase[128];     // UTF-8 passphrase, null-padded
+};                               // room prefix + "<hex8>", or empty for public
+```
+
+### ProxyConfig (17)
+
+```cpp
+struct ProxyConfig {             // 8 bytes
+    uint32_t proxy_ip;           // LDN subnet IP (e.g., 10.114.0.1 as 0x0A720001)
+    uint32_t proxy_subnet_mask;  // Subnet mask (e.g., 0xFFFF0000 for /16)
+};
+```
+
+### Connected (15)
+
+헤더 뒤에 전체 `NetworkInfo`(0x480바이트)로 응답합니다. 클라이언트에 할당된 노드는 `GetIpv4Address()`를 `NetworkInfo.ldn.nodes[].ipv4_address`와 맞춰 보고 식별합니다.
+
+### Scan (10) / ScanReply (11) / ScanReplyEnd (12)
+
+- **Scan**: 페이로드는 `ScanFilterFull`(0x60바이트)이며, 와일드카드면 비어 있습니다
+- **ScanReply**: 페이로드는 `NetworkInfo` 하나(0x480바이트)입니다
+- **ScanReplyEnd**: 페이로드가 없으며 검색 결과의 끝을 알립니다
+
+### CreateAccessPoint (2) / CreateAccessPointPrivate (3)
+
+```cpp
+struct CreateAccessPointRequest {       // 0xBC bytes (188)
+    SecurityConfig   security_config;   // 0x44 bytes
+    UserConfig       user_config;       // 0x30 bytes
+    NetworkConfig    network_config;    // 0x20 bytes
+    RelayNetworkConfig relay_network_config;// 0x28 bytes
+};
+// Advertise data is appended after this structure
+```
+
+```cpp
+struct CreateAccessPointPrivateRequest { // 0x13C bytes (316)
+    SecurityConfig     security_config; // 0x00: 0x44 bytes
+    SecurityParameter  security_parameter; // 0x44: 0x20 bytes
+    UserConfig         user_config;    // 0x64: 0x30 bytes
+    NetworkConfig      network_config; // 0x94: 0x20 bytes
+    AddressList        address_list;    // 0xB4: 0x60 bytes
+    RelayNetworkConfig   relay_network_config; // 0x114: 0x28 bytes
+};
+```
+
+### Connect (13) / ConnectPrivate (14)
+
+```cpp
+struct ConnectRequest {                 // 0x500 bytes (1280)
+    SecurityConfig security_config;      // 0x00: 0x44 bytes
+    UserConfig     user_config;         // 0x44: 0x30 bytes
+    uint32_t       local_communication_version; // 0x74: 4 bytes
+    uint32_t       option_unknown;       // 0x78: 4 bytes
+    uint32_t       _padding;            // 0x7C: 4 bytes (C# alignment padding)
+    NetworkInfo    network_info;         // 0x80: 0x480 bytes
+};
+static_assert(sizeof(ConnectRequest) == 0x500);
+```
+
+**중요**: 오프셋 0x7C의 `_padding` 필드는 반드시 필요합니다. `Pack=1`이 없는 C# `StructLayout`이 `NetworkInfo`(`IntentId` 안에 `int64_t local_communication_id`를 포함)를 오프셋 0x80의 8바이트 경계에 정렬하기 때문입니다.
+
+### ProxyData (20)
+
+```cpp
+struct ProxyDataHeader {                // 20 bytes (0x14)
+    ProxyInfo info;                     // 16 bytes: source/dest addressing
+    uint32_t  data_length;              // 4 bytes: payload size following header
+};
+```
+
+`ProxyInfo`에는 출발지/목적지 IPv4, 출발지/목적지 포트, 프로토콜 종류(TCP=6, UDP=17)가 들어 있습니다. 게임 트래픽(PIA 메시 데이터)은 이 정보로 서버를 통해 터널링됩니다.
+
+**브로드캐스트** UDP 패킷(PIA 메시 검색)에서는 `dest_ipv4`가 브로드캐스트 주소(예: `10.114.255.255`)이고 `dest_port`가 게임이 수신하는 포트와 같습니다. 기기 쪽 `RouteIncomingData()`는 같은 포트의 일치하는 프록시 소켓 **모두**에 이 패킷을 전달해야 합니다.
+
+### ExternalProxy 구조체
+
+```cpp
+struct ExternalProxyConfig {            // 0x26 bytes (38)
+    uint8_t  proxy_ip[16];             // IP address string (IPv4 or IPv6)
+    uint32_t address_family;           // 2 = IPv4, 23 = IPv6
+    uint16_t proxy_port;               // Proxy server port
+    uint8_t  token[16];               // Authentication token
+};
+
+struct ExternalProxyToken {             // 0x28 bytes (40)
+    uint32_t virtual_ip;               // Assigned virtual IP
+    uint8_t  token[16];                // Auth token
+    uint8_t  physical_ip[16];          // Client's physical IP
+    uint32_t address_family;           // 2 = IPv4, 23 = IPv6
+};
+
+struct ExternalProxyConnectionState {    // 0x08 bytes (8)
+    uint32_t ip_address;               // Client IP address
+    uint8_t  connected;                 // 0=disconnected, 1=connected
+    uint8_t  _pad[3];                  // Pack=4 alignment padding
+};
+```
+
+### 호스트 제어 패킷
+
+```cpp
+struct SetAcceptPolicyRequest {         // 1 byte
+    uint8_t accept_policy;             // AcceptPolicy enum (0-3)
+};
+
+struct RejectRequest {                  // 8 bytes
+    uint32_t node_id;                  // Node ID of player to reject
+    uint32_t disconnect_reason;        // DisconnectReason enum value
+};
+```
+
+### 유틸리티 패킷
+
+```cpp
+struct PingMessage {                    // 2 bytes
+    uint8_t requester;                 // 0 = server ping (echo back), 1 = client ping
+    uint8_t id;                        // Ping ID for matching request/response
+};
+
+struct NetworkErrorMessage {            // 4 bytes
+    uint32_t error_code;               // NetworkErrorCode enum value
+};
+
+struct DisconnectMessage {              // 4 bytes
+    uint32_t disconnect_ip;            // IP of disconnecting client
+};
+```
+
+## 주요 구조체
+
+### NetworkInfo (0x480바이트 = 1152바이트)
+
+`ScanReply`, `Connected`, `SyncNetwork` 패킷에서 쓰이는 핵심 구조체입니다.
+
+```cpp
+struct NetworkInfo {
+    NetworkId         network_id;   // 0x000: 32 bytes
+    CommonNetworkInfo  common;       // 0x020: 48 bytes (0x30)
+    LdnNetworkInfo     ldn;         // 0x050: 1072 bytes (0x430)
+};
+static_assert(sizeof(NetworkInfo) == 0x480);
+```
+
+### NodeInfo (0x40바이트 = 64바이트)
+
+```cpp
+struct NodeInfo {
+    uint32_t   ipv4_address;                // Network byte order
+    MacAddress mac_address;                  // 6 bytes
+    uint8_t    node_id;                      // 0 = host, 1-7 = clients
+    uint8_t    is_connected;                 // 1 = connected
+    char       user_name[33];                // UTF-8, null-terminated
+    uint8_t    reserved1;
+    uint16_t   local_communication_version;
+    uint8_t    reserved2[16];
+};
+```
+
+노드 0은 항상 호스트입니다. 게임은 `GetIpv4Address()` 결과를 `nodes[].ipv4_address`와 맞춰 보고 자기 노드 인덱스를 찾습니다.
+
+### LdnNetworkInfo (0x430바이트 = 1072바이트)
+
+```cpp
+struct LdnNetworkInfo {
+    uint8_t  security_parameter[16];  // 0x000
+    uint16_t security_mode;           // 0x010: SecurityMode enum
+    uint8_t  station_accept_policy;   // 0x012: AcceptPolicy enum
+    uint8_t  unknown1;               // 0x013
+    uint16_t reserved1;               // 0x014
+    uint8_t  node_count_max;           // 0x016
+    uint8_t  node_count;               // 0x017
+    NodeInfo nodes[8];                // 0x018: 8 × 64 = 512 bytes
+    uint16_t reserved2;               // 0x218
+    uint16_t advertise_data_size;     // 0x21A
+    uint8_t  advertise_data[384];     // 0x21C
+    uint8_t  unknown2[140];           // 0x39C
+    uint64_t authentication_id;       // 0x428
+};
+```
+
+## 바이트 순서와 패딩
+
+### IP 주소: 반드시 지켜야 할 불변 조건
+
+`NetworkInfo`, `ProxyConfig`, `m_ipv4_address`의 LDN IP는 모두 **wire 형식**입니다. 빅 엔디언을 `uint32`로 읽은 값입니다(예: `10.114.0.1` = `0x0A720001`). BSD `sockaddr_in.sin_addr`은 **네트워크 바이트 순서**(역시 빅 엔디언)를 사용합니다. `GetAddr()`는 `bswap32`를 수행하고, `sin_addr`은 wire 형식으로 저장됩니다(`Bind`에서는 bswap을 하지 않습니다). **절대 이중 변환하지 마세요.**
+
+### 구조체 배치 패딩
+
+C# 서버는 `[StructLayout(LayoutKind.Sequential)]`를 **`Pack=1` 없이** 사용합니다. 이는 실제로 다음과 같은 영향을 줍니다.
+
+1. **`LdnHeader`**는 10바이트가 아니라 12바이트입니다. 오프셋 0x06의 `reserved`가 `data_size`를 오프셋 0x08에 맞춥니다
+2. **`ConnectRequest`**는 `NetworkInfo`를 0x80(`int64_t`의 8바이트 경계)에 맞추기 위해 0x7C에 `_padding`을 둡니다
+3. **`ExternalProxyConnectionState`**는 Pack=4 정렬을 위해 `connected` 뒤에 3바이트 `_pad`를 둡니다
+
+모든 구조체에는 예상 크기를 검증하는 `static_assert`가 있습니다. `static_assert`가 실패하면 assert가 아니라 구조체 배치를 고쳐야 합니다.
+
+## 네트워크 오류 코드
+
+| 값 | 이름 | 설명 |
+|-------|------|-------------|
+| 0 | `None` | 오류 없음 |
+| 1 | `VersionMismatch` | 프로토콜 버전이 서버와 맞지 않습니다 |
+| 2 | `InvalidMagic` | 프로토콜 매직 넘버가 올바르지 않습니다 |
+| 3 | `InvalidSessionId` | 세션 ID가 올바르지 않거나 만료되었습니다 |
+| 4 | `HandshakeTimeout` | 핸드셰이크가 제때 끝나지 않았습니다 |
+| 5 | `AlreadyInitialized` | 클라이언트가 이미 Initialize를 보냈습니다 |
+| 100 | `SessionNotFound` | 참조한 세션이 존재하지 않습니다 |
+| 101 | `SessionFull` | 세션이 최대 인원에 도달했습니다 |
+| 102 | `SessionClosed` | 호스트가 세션을 닫았습니다 |
+| 103 | `NotInSession` | 세션에 있어야 하는 작업입니다 |
+| 104 | `AlreadyInSession` | 이미 세션에 있습니다 |
+| 200 | `NetworkNotFound` | 요청한 네트워크가 존재하지 않습니다 |
+| 201 | `NetworkFull` | 네트워크가 정원에 도달했습니다 |
+| 202 | `ConnectionRejected` | 호스트가 연결을 거부했습니다 |
+| 203 | `AuthenticationFailed` | 암호 인증에 실패했습니다 |
+| 204 | `InvalidRequest` | 형식이 잘못되었거나 올바르지 않은 요청입니다 |
+| 900 | `InternalError` | 서버 내부 오류입니다 |
+| 901 | `ServiceUnavailable` | 서비스를 일시적으로 사용할 수 없습니다 |
+
+## 열거형 레퍼런스
+
+|| 열거형 | 기반 타입 | 값 |
+||------|------------|--------|
+|| `AcceptPolicy` | `uint8_t` | `AcceptAll=0`, `RejectAll=1`, `BlackList=2`, `WhiteList=3` |
+|| `SecurityMode` | `uint16_t` | `Any=0`, `Product=1`, `Debug=2` |
+|| `NetworkType` | `uint8_t` | `None=0`, `General=1`, `Ldn=2`, `All=3` |
+|| `DisconnectReason` | `uint32_t` | `None=0`, `User=1`, `SystemRequest=2`, `DestroyedByHost=3`, `DestroyedByAdmin=4`, `Rejected=5`, `SignalLost=6` |
+|| `NetworkErrorCode` | `uint32_t` | `None=0`, `VersionMismatch=1`, `InvalidMagic=2`, `InvalidSessionId=3`, `HandshakeTimeout=4`, `AlreadyInitialized=5`, `SessionNotFound=100`, `SessionFull=101`, `SessionClosed=102`, `NotInSession=103`, `AlreadyInSession=104`, `NetworkNotFound=200`, `NetworkFull=201`, `ConnectionRejected=202`, `AuthenticationFailed=203`, `InvalidRequest=204`, `InternalError=900`, `ServiceUnavailable=901` |
+|| `ProtocolType` | `int32_t` | 아래 전체 표를 참고하세요 |
+
+### ProtocolType (전체 열거형)
+
+`System.Net.Sockets.ProtocolType`에 대응합니다. 실제 PIA 트래픽에는 `Tcp`(6)와 `Udp`(17)만 사용됩니다.
+
+|| 값 | 이름 | 비고 |
+||-------|------|-------|
+|| -1 | `Unknown` | |
+|| 0 | `Unspecified` / `IP` | 같은 값 |
+|| 1 | `Icmp` | |
+|| 2 | `Igmp` | |
+|| 3 | `Ggp` | |
+|| 4 | `IPv4` | |
+|| 6 | `Tcp` | **PIA TCP에 사용** |
+|| 12 | `Pup` | |
+|| 17 | `Udp` | **PIA UDP/브로드캐스트에 사용** |
+|| 22 | `Idp` | |
+|| 41 | `IPv6` | |
+|| 43 | `IPv6RoutingHeader` | |
+|| 44 | `IPv6FragmentHeader` | |
+|| 50 | `IPSecEncapsulatingSecurityPayload` | |
+|| 51 | `IPSecAuthenticationHeader` | |
+|| 58 | `IcmpV6` | |
+|| 59 | `IPv6NoNextHeader` | |
+|| 60 | `IPv6DestinationOptions` | |
+|| 77 | `ND` | |
+|| 255 | `Raw` | |
+|| 1000 | `Ipx` | |
+|| 1256 | `Spx` | |
+|| 1257 | `SpxII` | |
+
+### NetworkType 크기 불일치
+
+`NetworkType`은 C++ 열거형에서 `uint8_t`이지만 `ScanFilterFull.network_type`은 `uint32_t`입니다. 이는 C# 서버에서 `ScanFilter`가 `NetworkType`에 `uint`를 쓰는 것을 그대로 따른 것입니다. wire 형식에서 `network_type` 필드는 항상 4바이트입니다.
+
+## 추가 구조체
+
+### SecurityConfig (0x44바이트 = 68바이트)
+
+```cpp
+struct __attribute__((packed)) SecurityConfig {
+    uint16_t security_mode;     // SecurityMode enum
+    uint16_t passphrase_size;   // Length of passphrase (0-64)
+    uint8_t  passphrase[64];    // Passphrase data (null-padded)
+};
+```
+
+### SecurityParameter (0x20바이트 = 32바이트)
+
+비공개 방을 위한 무작위 보안 데이터입니다. `CreateAccessPointPrivateRequest`와 `ConnectPrivateRequest`에서 사용합니다.
+
+```cpp
+struct __attribute__((packed)) SecurityParameter {
+    uint8_t data[16];        // Random security data
+    uint8_t session_id[16];  // Session ID
+};
+```
+
+### UserConfig (0x30바이트 = 48바이트)
+
+```cpp
+struct __attribute__((packed)) UserConfig {
+    char    user_name[33];   // Player name (UTF-8, null-terminated)
+    uint8_t unknown1[15];    // Unknown/reserved
+};
+```
+
+### NetworkConfig (0x20바이트 = 32바이트)
+
+```cpp
+struct __attribute__((packed)) NetworkConfig {
+    IntentId intent_id;
+    uint16_t channel;
+    uint8_t  node_count_max;
+    uint8_t  reserved1;
+    uint16_t local_communication_version;
+    uint8_t  reserved2[10];
+};
+```
+
+### RelayNetworkConfig (0x28바이트 = 40바이트)
+
+중계 전용 기능을 위한 확장 설정입니다.
+
+```cpp
+struct __attribute__((packed)) RelayNetworkConfig {
+    uint8_t  game_version[16];
+    uint8_t  private_ip[16];       // For external proxy LAN detection
+    uint32_t address_family;       // AddressFamily enum (2=IPv4, 23=IPv6)
+    uint16_t external_proxy_port;
+    uint16_t internal_proxy_port;
+};
+```
+
+### AddressEntry (0x0C바이트 = 12바이트)
+
+노드의 IP/MAC 주소 쌍입니다.
+
+```cpp
+struct __attribute__((packed)) AddressEntry {
+    uint32_t   ipv4_address;  // Node IPv4 address
+    MacAddress mac_address;    // Node MAC address
+    uint16_t   reserved;      // Reserved/padding
+};
+```
+
+### AddressList (0x60바이트 = 96바이트)
+
+`CreateAccessPointPrivateRequest`를 위한 주소 항목 8개의 배열입니다.
+
+```cpp
+struct __attribute__((packed)) AddressList {
+    AddressEntry addresses[8];
+};
+```
+
+### ScanFilterFull (0x60바이트 = 96바이트)
+
+네트워크 검색용 전체 필터입니다. 참고로 `NetworkType`은 `uint8_t`이지만 `network_type`은 `uint32_t`입니다. 이는 이 필드에 `uint`를 쓰는 C# 서버의 `ScanFilter`와 일치합니다.
+
+```cpp
+struct __attribute__((packed)) ScanFilterFull {
+    NetworkId  network_id;      // 0x00: 32 bytes
+    uint32_t   network_type;    // 0x20: 4 bytes (uint32, not uint8!)
+    MacAddress mac_address;     // 0x24: 6 bytes
+    Ssid       ssid;            // 0x2A: 34 bytes
+    uint8_t    reserved[16];   // 0x4C: 16 bytes
+    uint32_t   flag;            // 0x5C: 4 bytes
+};
+```
+
+### ConnectPrivateRequest (0xBC바이트 = 188바이트)
+
+```cpp
+struct __attribute__((packed)) ConnectPrivateRequest {
+    SecurityConfig     security_config;             // 0x00: 0x44 bytes
+    SecurityParameter  security_parameter;          // 0x44: 0x20 bytes
+    UserConfig         user_config;                 // 0x64: 0x30 bytes
+    uint32_t           local_communication_version; // 0x94: 4 bytes
+    uint32_t           option_unknown;              // 0x98: 4 bytes
+    NetworkConfig      network_config;              // 0x9C: 0x20 bytes
+};
+```
+
+### ProxyConnectRequest (0x10바이트 = 16바이트)
+
+```cpp
+struct __attribute__((packed)) ProxyConnectRequest {
+    ProxyInfo info;  // Connection addressing info
+};
+```
+
+### ProxyConnectResponse (0x10바이트 = 16바이트)
+
+```cpp
+struct __attribute__((packed)) ProxyConnectResponse {
+    ProxyInfo info;  // Connection addressing info
+};
+```
+
+### ProxyDisconnectMessage (0x14바이트 = 20바이트)
+
+```cpp
+struct __attribute__((packed)) ProxyDisconnectMessage {
+    ProxyInfo info;              // Connection that was closed
+    int32_t   disconnect_reason; // Reason for disconnection
+};
+```
+
+### ProxyInfo IP 바이트 순서
+
+`ProxyInfo.source_ipv4`와 `ProxyInfo.dest_ipv4`는 다른 모든 LDN IP와 같은 wire 형식(uint32로 읽은 빅 엔디언)을 씁니다. [바이트 순서와 패딩](#바이트-순서와-패딩)을 참고하세요.

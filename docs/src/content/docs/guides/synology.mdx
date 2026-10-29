@@ -1,0 +1,72 @@
+---
+title: "Synology and other NAS devices"
+description: "Create a Container Manager project, connect consoles and preserve your data."
+---
+
+## Check the NAS first
+
+Use a NAS that supports Docker Compose and the relay's amd64/arm64 images. On Synology, use **Container Manager with Projects** (DSM 7.2-era package or newer on a supported model). Some models cannot run this package; installing Web Station does not add container support. Check the model's package availability. The relay + Redis example caps containers at 1.25 GiB total; leave room for DSM and your other services.
+
+The Project wizard imports Compose YAML, as described in [Synology's Container Manager Project help](https://kb.synology.com/en-global/DSM/help/ContainerManager/docker_project?version=7). UI labels can vary by DSM/package version.
+
+## Create a project in Container Manager
+
+1. Install/open **Container Manager** from Package Center. Create a working folder such as `/volume1/docker/potluck` in File Station.
+2. Save the complete [Compose example](/oc-potluck/downloads/compose.nas.yml) to your computer. It includes **both** the relay and Redis, limits, health check, private networking and log rotation.
+3. Choose **Project → Create**. Set a stable project name such as `potluck` and the working folder above.
+4. Upload the YAML, or choose the option to create a Compose file and paste its complete contents. Container Manager may store it as `compose.yaml` or `docker-compose.yaml`; use the actual filename if later using SSH.
+5. Review the image tag and published TCP port. Leave the default named volume for a first installation. **Do not enable a Web Station web portal**: this is not an HTTP application.
+6. Start the project. In its services/log view, confirm Redis is healthy and the relay remains running. If deployment fails, read the first error before retrying.
+
+For an explicit version or different host port, edit the Compose image/ports fields in the project editor, or use `.env` where your Container Manager version supports it. See [deployment options](../relay-server/). Rebuild/recreate the project after changing its configuration, while preserving volumes.
+
+## CLI alternative (any Compose-capable NAS)
+
+Place the example in a stable deployment directory as `compose.nas.yml` and run from that directory:
+
+```sh
+docker compose -f compose.nas.yml config --quiet
+docker compose -f compose.nas.yml pull
+docker compose -f compose.nas.yml up -d
+docker compose -f compose.nas.yml ps
+docker compose -f compose.nas.yml logs --tail=100 ldn-server redis
+```
+
+Your NAS account needs permission to manage Docker. On systems without the Compose plugin, use the vendor-supported installation/Project UI rather than running these as an arbitrary container command. Other NAS vendors' UI names differ; keep the same service, volume and network configuration.
+
+## LAN connection first
+
+Reserve the NAS LAN address in the router, e.g. `192.168.1.20`. On a console in that LAN, enter server **`192.168.1.20`**, port **`30456`**, mode **Remote**. Allow TCP 30456 through the DSM/host firewall from participating networks. Run the server test, then try two consoles on the same server/channel with P2P off.
+
+Even on the same LAN, choose Remote when testing this relay; Local bypasses it. Do not enter a Docker bridge IP, `redis`, `http://192.168.1.20` or the documentation URL.
+
+## Outside players
+
+1. Check that your internet service provides reachable inbound connectivity. CGNAT or double NAT may require ISP/router changes or a relay hosted on a reachable server.
+2. Forward the relay's published **TCP 30456** on the router to the NAS's reserved LAN address. If you changed the host port, use that port consistently.
+3. Allow the port through DSM's firewall, scoped to intended sources where practical. Do not expose Redis 6379 or DSM management ports for PotLuck.
+4. Outside consoles use your public IP/DDNS hostname, without a scheme/path. Test from an actually different network. A local console may need the LAN IP if the router lacks NAT loopback.
+
+QuickConnect and Web Station are not raw TCP relay tunnels. An ordinary HTTP reverse proxy or a web-proxied DNS record does not carry this game protocol. DDNS names an address; it does not bypass CGNAT or open a firewall. There is no client TLS switch to turn on. Keep relay access intentional.
+
+## Storage and permission errors
+
+The example uses a **Docker-managed named volume**, so creating the project folder does not require making a separate data share writable. Retain the same project name to reuse its volume.
+
+If you choose a bind mount, create its data directory and grant the container's numeric UID/GID **10001:10001** write access using your NAS ACL/ownership tooling. A folder writable by your DSM login is not automatically writable by that UID. Check the relay's log for permission errors. Do not solve this with `chmod 777`, privileged mode or root execution.
+
+## Update, backup and remove
+
+Tell players before stopping. Back up the project YAML, `.env` if used, and its named data volume while stopped; statistics in Redis are ephemeral. Update to a reviewed relay image tag, then pull and recreate with the same project/volume. Verify service status and a console test. The server image tag is independent of the device module version.
+
+In the Project UI, preserve volumes when rebuilding/removing containers. A Clean/Delete operation may offer deletion of related data: inspect its options first. On the CLI, `down -v` deletes named volumes. Follow [server operations](../relay-server/) for exact update/rollback commands.
+
+## If it still fails
+
+- **No matching image manifest:** check the NAS CPU; 32-bit ARM is outside this example.
+- **Port already allocated:** choose another host port, e.g. 30457 → container 30456, and update console/firewall/router settings.
+- **Redis unhealthy:** inspect its log and available memory; do not publish its port to troubleshoot.
+- **Relay healthy, outside test fails:** compare LAN and external results; check forwarding, DSM firewall, double NAT/CGNAT and the actual public address.
+- **Permission denied:** named volume or bind-folder UID/ACL, not the DSM web login.
+
+These instructions cover the deployment configuration; DSM model-specific hardware behavior still needs verification on your NAS. For game-session failures see [troubleshooting](../troubleshooting/).

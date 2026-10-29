@@ -1,0 +1,130 @@
+# potluck Development Container
+# Based on devkitPro for Nintendo Switch development
+#
+# This image includes pre-built Atmosphere-libs (libstratosphere.a) and
+# devkitPro packages so that CI workflows only need to compile the
+# sysmodule and overlay — never the dependencies.
+#
+# Pre-built libs are installed into /opt/potluck/ so that they
+# won't be overwritten when a checkout is mounted at /workspace.
+
+FROM devkitpro/devkita64:latest
+
+LABEL maintainer="potluck contributors"
+LABEL description="Development environment for potluck Switch sysmodule with pre-built dependencies"
+
+# Set environment variables
+ENV DEVKITPRO=/opt/devkitpro
+ENV DEVKITARM=${DEVKITPRO}/devkitARM
+ENV DEVKITA64=${DEVKITPRO}/devkitA64
+ENV PATH=${DEVKITPRO}/tools/bin:${DEVKITA64}/bin:${PATH}
+
+# Install additional system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    iputils-ping \
+    git \
+    curl \
+    wget \
+    zip \
+    unzip \
+    python3 \
+    python3-pip \
+    doxygen \
+    graphviz \
+    clang-tidy \
+    python3-venv \
+    && rm -rf /var/lib/apt/lists/* \
+    && pip3 install --break-system-packages gcovr
+
+# Install CodeQL CLI (standalone) for static analysis
+# Version pinned to latest stable — update the URL when bumping
+# CodeQL ships for x86-64 Linux only; the arm64 image builds and tests without it
+ARG TARGETARCH
+RUN if [ "${TARGETARCH:-amd64}" = "amd64" ]; then \
+        mkdir -p /opt/codeql && \
+        curl -fsSL https://github.com/github/codeql-action/releases/download/codeql-bundle-v2.21.1/codeql-bundle-linux64.tar.gz \
+        | tar xz -C /opt/codeql --strip-components=1 && \
+        chmod +x /opt/codeql/codeql && \
+        /opt/codeql/codeql resolve qlpacks 2>&1 | head -5; \
+    fi
+ENV PATH="/opt/codeql:${PATH}"
+
+# Switch development libraries are pre-installed in the devkitpro/devkita64
+# base image. No dkp-pacman install step is needed — the base image already
+# contains switch-dev (meta package), libnx, switch-curl, switch-zlib,
+# switch-mbedtls, switch-miniupnpc, and devkitA64-gdb along with all
+# dependencies. Running dkp-pacman -Syyu would attempt to re-download
+# package databases from pkg.devkitpro.org, which is behind Cloudflare
+# and returns 403 to non-browser requests, breaking the build.
+
+# Configure GDB to allow auto-loading scripts from any path
+RUN mkdir -p /root/.config/gdb && \
+    echo "set auto-load safe-path /" > /root/.config/gdb/gdbinit
+
+# Create non-root user (UID/GID will be updated by VSCode's updateRemoteUserUID)
+RUN useradd -m -s /bin/bash devuser
+
+# Allow git to work with mounted volumes (different ownership inside Docker)
+RUN git config --system --add safe.directory '*'
+
+# ---------------------------------------------------------------------------
+# Pre-build Atmosphere-libs (libstratosphere.a)
+# The submodule sources are COPY'd in a layout matching the repo structure
+# so that the Atmosphere build system (which uses __FILE__-relative paths)
+# can find libvapours, config templates, etc.
+#
+# After building, the compiled library is installed to /opt/potluck/
+# where CI workflows symlink it into the checkout. Build artifacts in
+# /workspace are cleaned up afterwards.
+# ---------------------------------------------------------------------------
+# Atmosphere 1.12 (firmware 23 support) calls libnx functions added after its
+# 4.12.0 release, so install libnx from a pinned commit before building it.
+ARG LIBNX_COMMIT=b156b4774fb2df7b93402169509266da7547fc4c
+RUN git clone --filter=blob:none https://github.com/switchbrew/libnx.git /tmp/libnx && \
+    git -C /tmp/libnx checkout --quiet "$LIBNX_COMMIT" && \
+    make -C /tmp/libnx/nx -j$(nproc) install && \
+    rm -rf /tmp/libnx
+
+COPY sysmodule/Atmosphere-libs/ /workspace/sysmodule/Atmosphere-libs/
+
+RUN cd /workspace/sysmodule/Atmosphere-libs/libstratosphere && \
+    make -j$(nproc) nx_release && \
+    echo "libstratosphere.a built successfully"
+
+# Install the compiled library and headers to /opt/potluck/
+# This path is separate from /workspace so it won't be overwritten by
+# volume mounts or GitHub Actions checkouts.
+RUN mkdir -p /opt/potluck/libstratosphere/lib/nintendo_nx_arm64_armv8a/release && \
+    mkdir -p /opt/potluck/libstratosphere/include && \
+    mkdir -p /opt/potluck/libvapours/include && \
+    mkdir -p /opt/potluck/config/templates && \
+    cp /workspace/sysmodule/Atmosphere-libs/libstratosphere/lib/nintendo_nx_arm64_armv8a/release/libstratosphere.a \
+       /opt/potluck/libstratosphere/lib/nintendo_nx_arm64_armv8a/release/ && \
+    cp -r /workspace/sysmodule/Atmosphere-libs/libstratosphere/include/* \
+          /opt/potluck/libstratosphere/include/ && \
+    cp /workspace/sysmodule/Atmosphere-libs/libstratosphere/stratosphere.specs \
+       /opt/potluck/libstratosphere/ 2>/dev/null || true && \
+    cp /workspace/sysmodule/Atmosphere-libs/libstratosphere/discard-ehframe.ld \
+       /opt/potluck/libstratosphere/ 2>/dev/null || true && \
+    cp -r /workspace/sysmodule/Atmosphere-libs/libvapours/include/* \
+          /opt/potluck/libvapours/include/ && \
+    cp -r /workspace/sysmodule/Atmosphere-libs/config/templates/* \
+          /opt/potluck/config/templates/ && \
+    echo "Installed pre-built libs to /opt/potluck/" && \
+    ls -la /opt/potluck/libstratosphere/lib/nintendo_nx_arm64_armv8a/release/libstratosphere.a
+
+# Clean up build artifacts from /workspace (will be volume-mounted at runtime)
+RUN rm -rf /workspace/sysmodule/Atmosphere-libs/libstratosphere/build && \
+    rm -rf /workspace/sysmodule/Atmosphere-libs/libstratosphere/lib/nintendo_nx_arm64_armv8a && \
+    rm -rf /workspace/sysmodule/Atmosphere-libs/libstratosphere/out && \
+    rm -rf /workspace/sysmodule/Atmosphere-libs/libvapours/build 2>/dev/null || true && \
+    rm -rf /workspace/sysmodule/Atmosphere-libs/libvapours/out 2>/dev/null || true
+
+# Create workspace directory (will be mounted over at runtime)
+WORKDIR /workspace
+
+# Set default shell to bash
+SHELL ["/bin/bash", "-c"]
+
+# Default command
+CMD ["/bin/bash"]

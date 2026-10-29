@@ -1,0 +1,39 @@
+---
+title: "Architecture"
+description: "Understand the module, overlay, installer and relay boundaries."
+---
+
+## Component boundaries
+
+| Component | Responsibility |
+| --- | --- |
+| Installer | Downloads/verifies/releases files and provides configuration, diagnostics and removal |
+| `ldn:u` MITM | Handles game LDN state, discovery and room lifecycle |
+| `bsd:u` MITM | Routes intercepted virtual LDN socket traffic through the selected backend |
+| `potluck` IPC service | Exposes live module status/configuration to the overlay |
+| Overlay | Presents settings/status; it does not forward gameplay packets |
+| Relay + Redis | Remote room discovery/packet relay and statistics |
+
+Local mode uses the LAN backend and does not need the relay. Remote mode uses the relay client; an empty host selects effective local operation. The game captures its backend when opening services, which is why changing modes requires restarting the game.
+
+## Protocol and constraints
+
+The shared expanded heap is 384 KB in `sysmodule/source/main.cpp`. Treat receive queues, sockets, thread stacks and dynamic work together when reviewing memory. Fixed buffers and bounded queues matter on real hardware.
+
+Wire structures must stay byte-compatible with the C# server. The LDN header is 12 bytes, including alignment padding. Do not change padding or weaken size assertions to make a build pass. See [protocol](../../reference/protocol/) and [IPC commands](../../reference/ipc-commands/).
+
+Games use their own PIA networking above LDN. Correct local IP/node mapping and broadcast delivery to all matching listening sockets are necessary for mesh discovery. A successful room scan alone does not prove gameplay traffic works.
+
+## Source map
+
+| Directory | Area |
+| --- | --- |
+| `sysmodule/source/ldn/` | LDN service, state, dispatch and shared status |
+| `sysmodule/source/bsd/` | Socket interception, proxy routing and queues |
+| `sysmodule/source/network/` | Relay client, TCP transport, reconnect |
+| `sysmodule/source/p2p/` | Optional direct traffic path and UPnP |
+| `sysmodule/source/config/` | INI parsing, persistence and configuration IPC |
+| `overlay/`, `installer/` | device user interfaces |
+| `server/src/` | Relay and server-side protocol implementation |
+
+Use the current source and focused tests for implementation details; host tests and static documentation do not replace [hardware verification](../building/).

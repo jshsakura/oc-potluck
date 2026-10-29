@@ -1,0 +1,36 @@
+---
+title: "Troubleshooting"
+description: "Diagnose installation, discovery, networking and disconnects."
+---
+
+## Start with the symptom
+
+| Symptom | First checks |
+| --- | --- |
+| Overlay absent | nx-ovlloader/menu, `switch/.overlays/potluck.ovl`, shortcut |
+| Module unavailable / another LDN module | Matching module+overlay release, reboot, only one LDN autostart flag |
+| Remote but no server test | Empty host acts as local; enter a relay address |
+| Server test times out | Host/port, Docker port mapping, firewall, router TCP forwarding, public IP/CGNAT |
+| Test passes but no room | Same server/channel/game version, restart game after mode change, local wireless menu |
+| Room visible then disconnect | P2P off first; peer logs, stability, game compatibility |
+| No local room | Same LAN, no AP isolation/guest VLAN; LAN TCP/UDP 11452 |
+| NAS restart loop | Both service logs, Redis health, CPU architecture, memory cap, volume permissions |
+
+## Address and protocol
+
+Use the NAS LAN IP on its network and a reachable public IP/DDNS outside. Without hairpin NAT, a local console may fail using the public hostname. Double NAT and CGNAT may block inbound traffic despite router forwarding.
+
+30456 is the relay protocol, not HTTP. A browser, Web Station, an HTTP reverse proxy or QuickConnect does not test or expose this raw TCP service. Do not add `https://` to the device address. See [NAS networking](../synology/).
+
+## Evidence for a report
+
+Temporarily enable debug level 2, reproduce once, then disable it. Collect only the new portion of `config/potluck/potluck.log` and relevant Atmosphere reports. Include module/overlay/server versions, game/version, mode, P2P, channel agreement, topology and exact steps. Redact personal data and private channel/address values before posting.
+
+From the relay deployment directory:
+
+```sh
+docker compose -f compose.nas.yml ps
+docker compose -f compose.nas.yml logs --tail=100 ldn-server redis
+```
+
+A supported-list entry and server probe do not prove a game session works. Keep logs bounded and isolate the failing step. [Report an issue](https://github.com/jshsakura/oc-potluck/issues) with evidence, or use [recovery](../maintenance/) for installation/boot failure.

@@ -1,0 +1,51 @@
+---
+import LineIcon from './LineIcon.astro';
+interface Props { readonly lang: 'en' | 'ko'; }
+const { lang } = Astro.props;
+const ko = lang === 'ko';
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+const guide = (slug: string) => `${base}/${ko ? 'ko/' : ''}guides/${slug}/`;
+const modes: ReadonlyArray<{ icon: 'wifi' | 'globe'; title: string; text: string }> = ko ? [
+    { icon: 'wifi', title: '로컬 모드', text: '같은 LAN이나 와이파이에서 서버 없이 연결합니다. 모두 로컬 모드를 선택한 뒤 게임의 로컬 통신 메뉴에서 만나세요.' },
+    { icon: 'globe', title: '원격 모드', text: '서로 다른 네트워크에 있을 때 사용합니다. 친구들과 같은 중계 서버 주소·포트·채널을 설정하세요.' },
+] : [
+    { icon: 'wifi', title: 'Nearby? Play locally.', text: 'Connect on the same LAN or Wi-Fi without a relay. Choose local mode, then meet in the game’s local wireless menu.' },
+    { icon: 'globe', title: 'Far apart? Use a relay.', text: 'Use the same relay address, port and channel as your friends. PotLuck relays room discovery and TCP/UDP game traffic.' },
+];
+const steps: ReadonlyArray<{ icon: 'download' | 'sliders' | 'users'; title: string; text: string; link: string; label: string }> = ko ? [
+    { icon: 'download', title: '설치 후 재부팅', text: '설치 앱을 내려받아 홈브루 메뉴에서 실행하세요. 모듈과 오버레이 설치가 끝나면 기기를 재부팅하세요.', link: 'installation', label: '설치 가이드' },
+    { icon: 'sliders', title: '플레이 모드 선택', text: '오버레이에서 로컬 또는 원격 모드를 선택하세요. 모드를 변경했다면 게임을 완전히 종료한 뒤 다시 실행하세요.', link: 'overlay', label: '모드와 사용법' },
+    { icon: 'users', title: '방 만들기와 참가', text: '게임의 로컬 통신 메뉴에서 한 명이 방을 만들면 다른 친구들이 참가할 수 있습니다. 모두 같은 게임 버전을 사용하세요.', link: 'troubleshooting', label: '연결 문제 해결' },
+] : [
+    { icon: 'download', title: 'Install and restart', text: 'Run the release installer from the Homebrew Menu. Restart the device after installing the module and overlay.', link: 'installation', label: 'Installation guide' },
+    { icon: 'sliders', title: 'Choose a mode, then open the game', text: 'Select local or remote in the overlay. If you change modes, fully close the game and launch it again.', link: 'overlay', label: 'Modes and controls' },
+    { icon: 'users', title: 'Make a room and invite friends', text: 'Everyone needs the same game version. One player hosts in the game’s local wireless menu and the others join.', link: 'troubleshooting', label: 'If you cannot meet' },
+];
+const links: ReadonlyArray<{ icon: 'sliders' | 'refresh' | 'layers'; slug: string; title: string; text: string }> = ko ? [
+    { icon: 'sliders', slug: 'configuration', title: '설정 옵션', text: '서버·채널·로그 설정과 적용 시점' },
+    { icon: 'refresh', slug: 'maintenance', title: '업데이트·삭제·복구', text: '설정 백업, 업데이트, 삭제 및 복구 방법' },
+    { icon: 'layers', slug: 'introduction', title: '구성 요소와 동작 원리', text: '설치 앱·모듈·오버레이·중계 서버' },
+] : [
+    { icon: 'sliders', slug: 'configuration', title: 'Settings and defaults', text: 'Server, channel and logging options' },
+    { icon: 'refresh', slug: 'maintenance', title: 'Update, remove and recover', text: 'Backups, updates and boot recovery' },
+    { icon: 'layers', slug: 'introduction', title: 'How the parts work', text: 'Installer, module, overlay and relay' },
+];
+---
+<div class="landing-body">
+    <section class="landing-section" aria-labelledby="modes">
+        <div><p class="landing-eyebrow">{ko ? '01 / 플레이 방식' : '01 / PLAY YOUR WAY'}</p><h2 id="modes">{ko ? '로컬과 원격, 두 가지 모드' : 'Choose where to play.'}</h2></div>
+        <div class="landing-rows">{modes.map(mode => <div class="landing-row"><span class="landing-icon"><LineIcon name={mode.icon} /></span><div><h3>{mode.title}</h3><p>{mode.text}</p></div></div>)}</div>
+    </section>
+    <section class="landing-section" aria-labelledby="start">
+        <div><p class="landing-eyebrow">{ko ? '02 / 처음 시작' : '02 / GET STARTED'}</p><h2 id="start">{ko ? '설치하고 게임 시작하기' : 'From install to your first room.'}</h2><p class="landing-section-note">{ko ? '설치 앱으로 모듈과 오버레이를 설치합니다. 설치가 끝나면 앱을 종료해도 됩니다.' : 'The installer handles setup. The LDN MITM module handles traffic while you play.'}</p></div>
+        <ol class="landing-steps">{steps.map((step, index) => <li><span class="landing-icon"><LineIcon name={step.icon} /></span><div><span class="landing-number" aria-hidden="true">0{index + 1}</span><h3>{step.title}</h3><p>{step.text}</p><a class="landing-text-link" href={guide(step.link)}>{step.label}<span aria-hidden="true">&rarr;</span></a></div></li>)}</ol>
+    </section>
+    <section class="landing-section" aria-labelledby="relay">
+        <div><p class="landing-eyebrow">{ko ? '03 / 중계 서버' : '03 / HOST A RELAY'}</p><h2 id="relay">{ko ? '중계 서버 직접 운영하기' : 'A relay of your own.'}</h2></div>
+        <div class="landing-relay-copy"><p>{ko ? 'NAS나 서버에서 중계 서버와 Redis를 운영할 수 있습니다. Docker Compose를 사용하거나 소스를 빌드해 직접 실행하세요.' : 'Run the relay and Redis on a NAS or server. Use Docker Compose or build and run the source directly.'}</p><div class="landing-actions"><a class="landing-button secondary" href={guide('synology')}><LineIcon name="server" />{ko ? 'NAS·시놀로지 설치' : 'NAS / Synology setup'}<span aria-hidden="true">&rarr;</span></a><a class="landing-text-link" href={guide('relay-server')}><LineIcon name="box" />Docker Compose<span aria-hidden="true">&rarr;</span></a><a class="landing-text-link" href={guide('relay-native')}><LineIcon name="code" />{ko ? '소스로 직접 실행' : 'Run from source'}<span aria-hidden="true">&rarr;</span></a></div><p class="landing-section-note">{ko ? '채널은 방 검색을 구분하는 용도이며, 통신을 암호화하거나 사용자를 인증하지는 않습니다.' : 'Local mode on the same LAN needs no relay. Remote channels separate discovery; they do not provide encryption or strong authentication.'}</p></div>
+    </section>
+    <nav class="landing-guide-nav" aria-label={ko ? '더 알아보기' : 'More guides'}>
+        {links.map(link => <a href={guide(link.slug)}><span class="landing-icon"><LineIcon name={link.icon} /></span><span><strong>{link.title}</strong><span>{link.text}</span></span><span aria-hidden="true">&rarr;</span></a>)}
+    </nav>
+    <footer class="landing-footer"><a href="https://github.com/jshsakura/oc-potluck/releases/latest"><LineIcon name="download" />{ko ? '릴리스 다운로드' : 'Download a release'}</a><a href="https://github.com/jshsakura/oc-potluck"><LineIcon name="github" />GitHub</a><a href="https://jshsakura.github.io/oc-cookingfoil/"><LineIcon name="heart" />CookingFoil</a><p>{ko ? '지원 목록에 있는 게임도 실기 호환성이 보장되지는 않습니다. 같은 게임 버전으로 연결을 확인하세요.' : 'The supported list is not a hardware compatibility guarantee. Verify your first connection with matching game versions.'}</p></footer>
+</div>

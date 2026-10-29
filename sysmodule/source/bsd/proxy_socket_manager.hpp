@@ -1,0 +1,708 @@
+/**
+ * @file proxy_socket_manager.hpp
+ * @brief Proxy Socket Manager - Central Registry for LDN Proxy Sockets
+ *
+ * This file defines the ProxySocketManager class which manages all proxy sockets
+ * for LDN communication. It acts as a bridge between the BSD MITM service and
+ * the LDN protocol layer.
+ *
+ * ## Responsibilities
+ *
+ * 1. **Socket Registry**: Maps file descriptors to ProxySocket instances
+ * 2. **Port Allocation**: Manages ephemeral port pool for proxy sockets
+ * 3. **Data Routing**: Routes incoming ProxyData packets to the correct socket
+ * 4. **LDN Detection**: Determines if an address belongs to the LDN network
+ *
+ * ## Architecture
+ *
+ * ```
+ * ┌─────────────────────────────────────────────────────────────────────────┐
+ * │ BSD MITM Service                                                        │
+ * │   Bind(fd, 10.114.x.x) ──┐                                              │
+ * │   Connect(fd, 10.114.x.x)├──► ProxySocketManager                        │
+ * │   Send(fd) ──────────────┤      │                                       │
+ * │   Recv(fd) ◄─────────────┘      │                                       │
+ * │                                 ▼                                       │
+ * │                           ┌──────────┐                                  │
+ * │                           │ Registry │ fd → ProxySocket                 │
+ * │                           └──────────┘                                  │
+ * │                                 │                                       │
+ * │                                 ▼                                       │
+ * │                           ┌────────────────┐                            │
+ * │                           │ EphemeralPorts │                            │
+ * │                           └────────────────┘                            │
+ * └─────────────────────────────────────────────────────────────────────────┘
+ *
+ * ┌─────────────────────────────────────────────────────────────────────────┐
+ * │ LDN MITM Service                                                        │
+ * │   ProxyData packet ────────► ProxySocketManager.RouteIncomingData()     │
+ * │                                     │                                   │
+ * │                                     ▼                                   │
+ * │                              ProxySocket.IncomingData()                 │
+ * └─────────────────────────────────────────────────────────────────────────┘
+ * ```
+ *
+ * ## Thread Safety
+ *
+ * All public methods are thread-safe. The manager uses a mutex to protect
+ * the socket registry. Individual ProxySocket instances have their own
+ * synchronization for receive queues.
+ *
+ * ## Singleton Pattern
+ *
+ * The manager is a singleton because:
+ * - There's only one BSD service being MITMed
+ * - The LDN MITM needs to route data to the same registry
+ * - File descriptors are global to the process
+ *
+ * @copyright Copyright (c) 2026 potluck contributors
+ * @license GPL-2.0-or-later
+ */
+
+#pragma once
+
+#include <stratosphere.hpp>
+#include <atomic>
+#include <unordered_map>
+#include <memory>
+#include "proxy_socket.hpp"
+#include "ephemeral_port_pool.hpp"
+#include "bsd_types.hpp"
+#include "../protocol/types.hpp"
+
+namespace ams::mitm::bsd {
+
+/**
+ * @brief Maximum number of concurrent proxy sockets
+ *
+ * Limits memory usage. Games typically don't need many sockets for LDN.
+ */
+constexpr size_t MAX_PROXY_SOCKETS = 64;
+
+/**
+ * @brief Invalid file descriptor sentinel
+ */
+constexpr s32 INVALID_FD = -1;
+
+/** @brief Outcome of handing game data to the relay. */
+enum class ProxySendResult {
+    Sent,        ///< The frame went out whole
+    WouldBlock,  ///< The relay could not take it at once; nothing went out
+    Failed,      ///< No relay session, or the send failed
+};
+
+/**
+ * @brief Proxy Socket Manager
+ *
+ * Central registry for all proxy sockets. Manages the mapping between
+ * BSD file descriptors and ProxySocket instances.
+ *
+ * ## Key Operations
+ *
+ * - CreateProxySocket: Allocate a new proxy socket for an fd
+ * - GetProxySocket: Look up a proxy socket by fd
+ * - CloseProxySocket: Clean up a proxy socket
+ * - RouteIncomingData: Route ProxyData packets to the correct socket
+ *
+ * ## File Descriptor Strategy
+ *
+ * We use the game's real file descriptors (from Socket() calls to the
+ * real BSD service) as keys. When we detect an LDN address in Bind/Connect,
+ * we create a ProxySocket associated with that fd. Subsequent Send/Recv
+ * calls check if the fd has an associated ProxySocket and route accordingly.
+ */
+class ProxySocketManager {
+public:
+    /**
+     * @brief Get the singleton instance
+     * @return Reference to the global ProxySocketManager
+     */
+    static ProxySocketManager& GetInstance();
+
+    /**
+     * @brief Deleted copy constructor
+     */
+    ProxySocketManager(const ProxySocketManager&) = delete;
+    ProxySocketManager& operator=(const ProxySocketManager&) = delete;
+
+    // =========================================================================
+    // Socket Management
+    // =========================================================================
+
+    /**
+     * @brief Create a new proxy socket for the given file descriptor
+     *
+     * Called when we detect that a socket should be proxied (LDN address
+     * in Bind or Connect).
+     *
+     * @param fd File descriptor from the real BSD service
+     * @param type Socket type (Stream or Dgram)
+     * @param protocol Protocol type (Tcp or Udp)
+     * @param owner_pid Game process issuing the call
+     * @return Ref to the created (or existing) ProxySocket, or null if failed
+     *
+     * @note Thread-safe
+     * @note Returns nullptr if fd already has a proxy socket
+     */
+    /// @gdb{tag="BSD:SOCKET", msg="CreateProxySocket: fd=%d type=%d protocol=%d", args="$x1, $x2, $x3"}
+    ProxySocketRef CreateProxySocket(s32 fd, potluck::bsd::SocketType type, potluck::bsd::ProtocolType protocol,
+                                     u64 owner_pid);
+
+    /**
+     * @brief Get the proxy socket for a file descriptor
+     *
+     * @param fd File descriptor to look up
+     * @return Pointer to the ProxySocket, or nullptr if not a proxy socket
+     *
+     * @note Thread-safe
+     * @note The ref keeps the socket alive until it is dropped, even if
+     *       another thread closes it meanwhile
+     */
+    /// @gdb{tag="BSD:SOCKET", msg="GetProxySocket: fd=%d", args="$x1"}
+    ProxySocketRef GetProxySocket(s32 fd);
+
+    /**
+     * @brief Check if a file descriptor has an associated proxy socket
+     *
+     * @param fd File descriptor to check
+     * @return true if fd is a proxy socket, false otherwise
+     *
+     * @note Thread-safe
+     */
+    bool IsProxySocket(s32 fd) const;
+
+    /**
+     * @brief Close and remove a proxy socket
+     *
+     * Called when the game closes the socket.
+     *
+     * @param fd File descriptor to close
+     * @return true if a proxy socket was closed, false if not found
+     *
+     * @note Thread-safe
+     * @note Also releases any allocated ephemeral port
+     */
+    /// @gdb{tag="BSD:SOCKET", msg="CloseProxySocket: fd=%d", args="$x1"}
+    bool CloseProxySocket(s32 fd);
+
+    /**
+     * @brief Close all proxy sockets
+     *
+     * Called when the LDN session ends or during cleanup.
+     *
+     * @note Thread-safe
+     */
+    /// @gdb{tag="BSD:SOCKET", msg="CloseAllProxySockets"}
+    void CloseAllProxySockets();
+
+    /**
+     * @brief Reset the entire manager state
+     *
+     * Closes all sockets, clears pending packets, resets local IP.
+     * Should be called when the LDN session ends to prevent memory leaks.
+     *
+     * @note Thread-safe
+     */
+    void Reset();
+
+    // =========================================================================
+    // Port Management
+    // =========================================================================
+
+    /**
+     * @brief Allocate an ephemeral port
+     *
+     * @param protocol Protocol type (Tcp or Udp)
+     * @return Allocated port in host byte order, or 0 if none available
+     *
+     * @note Thread-safe (delegated to EphemeralPortPool)
+     */
+    /// @gdb{tag="BSD:SOCKET", msg="AllocatePort: protocol=%d", args="$x1"}
+    uint16_t AllocatePort(potluck::bsd::ProtocolType protocol);
+
+    /**
+     * @brief Reserve a specific port
+     *
+     * Used when the game binds to a specific port.
+     *
+     * @param port Port number in host byte order
+     * @param protocol Protocol type
+     * @return true if reserved, false if already in use
+     *
+     * @note Thread-safe
+     */
+    /// @gdb{tag="BSD:SOCKET", msg="ReservePort: port=%u protocol=%d", args="$x1, $x2"}
+    bool ReservePort(uint16_t port, potluck::bsd::ProtocolType protocol);
+
+    /**
+     * @brief Release a port back to the pool
+     *
+     * @param port Port number in host byte order
+     * @param protocol Protocol type
+     *
+     * @note Thread-safe
+     */
+    /// @gdb{tag="BSD:SOCKET", msg="ReleasePort: port=%u protocol=%d", args="$x1, $x2"}
+    void ReleasePort(uint16_t port, potluck::bsd::ProtocolType protocol);
+
+    // =========================================================================
+    // Data Routing
+    // =========================================================================
+
+    /**
+     * @brief Route incoming ProxyData to the correct socket
+     *
+     * Called by the LDN MITM service when a ProxyData packet is received.
+     * Finds the socket that matches the destination address/port and queues
+     * the data for that socket.
+     *
+     * @param source_ip Source IP (host byte order)
+     * @param source_port Source port (host byte order)
+     * @param dest_ip Destination IP (host byte order)
+     * @param dest_port Destination port (host byte order)
+     * @param protocol Protocol type
+     * @param data Packet payload
+     * @param data_len Payload length
+     * @return true if data was routed to a socket, false if no matching socket
+     *
+     * @note Thread-safe
+     */
+    /// @gdb{tag="BSD:DATA", msg="RouteIncomingData: dest_ip=0x%x dest_port=%u", args="$x3, $x4"}
+    bool RouteIncomingData(uint32_t source_ip, uint16_t source_port,
+                           uint32_t dest_ip, uint16_t dest_port,
+                           potluck::bsd::ProtocolType protocol,
+                           const void* data, size_t data_len);
+
+    // =========================================================================
+    // Outgoing Data
+    // =========================================================================
+
+    /**
+     * @brief Callback type for sending ProxyData to the LDN server
+     *
+     * This callback is invoked when a proxy socket needs to send data.
+     * The LDN MITM service registers this callback to handle sending.
+     *
+     * @param source_ip Source IP (host byte order)
+     * @param source_port Source port (host byte order)
+     * @param dest_ip Destination IP (host byte order)
+     * @param dest_port Destination port (host byte order)
+     * @param protocol Protocol type (TCP/UDP)
+     * @param data Packet payload
+     * @param data_len Payload length
+     * @param may_wait false when the game asked not to block (MSG_DONTWAIT or O_NONBLOCK)
+     * @return Sent, WouldBlock (nothing went out: the relay is busy), or Failed
+     */
+    using SendProxyDataCallback = ProxySendResult (*)(uint32_t source_ip, uint16_t source_port,
+                                                      uint32_t dest_ip, uint16_t dest_port,
+                                                      potluck::bsd::ProtocolType protocol,
+                                                      const void* data, size_t data_len, bool may_wait);
+
+    /**
+     * @brief Set the callback for sending ProxyData to the LDN server
+     *
+     * Called by the LDN MITM service during initialization.
+     *
+     * @param callback Function to call when proxy sockets need to send data
+     *
+     * @note Thread-safe
+     */
+    /// @gdb{tag="BSD:CONFIG", msg="SetSendCallback"}
+    void SetSendCallback(SendProxyDataCallback callback);
+
+    /**
+     * @brief Send data through a proxy socket
+     *
+     * Called by ProxySocket::SendTo to actually transmit data via LDN.
+     *
+     * @param source_ip Source IP (host byte order)
+     * @param source_port Source port (host byte order)
+     * @param dest_ip Destination IP (host byte order)
+     * @param dest_port Destination port (host byte order)
+     * @param protocol Protocol type
+     * @param data Packet payload
+     * @param data_len Payload length
+     * @param may_wait false to return WouldBlock instead of waiting for the relay
+     * @return Sent; WouldBlock when the relay could not take it at once and nothing went out;
+     *         Failed when no callback is registered or the send failed
+     *
+     * @note Thread-safe
+     */
+    /// @gdb{tag="BSD:DATA", msg="SendProxyData: src=0x%x:%u -> dst=0x%x:%u", args="$x1, $x2, $x3, $x4"}
+    ProxySendResult SendProxyData(uint32_t source_ip, uint16_t source_port,
+                                  uint32_t dest_ip, uint16_t dest_port,
+                                  potluck::bsd::ProtocolType protocol,
+                                  const void* data, size_t data_len, bool may_wait = true);
+
+    /**
+     * @brief Callback type for sending ProxyConnect to the LDN server
+     *
+     * This callback is invoked when a TCP proxy socket calls Connect().
+     *
+     * @param source_ip Source IP (host byte order)
+     * @param source_port Source port (host byte order)
+     * @param dest_ip Destination IP (host byte order)
+     * @param dest_port Destination port (host byte order)
+     * @param protocol Protocol type (TCP)
+     * @return true if request was sent successfully, false otherwise
+     */
+    using SendProxyConnectCallback = bool (*)(uint32_t source_ip, uint16_t source_port,
+                                               uint32_t dest_ip, uint16_t dest_port,
+                                               potluck::bsd::ProtocolType protocol);
+
+    /**
+     * @brief Set the callback for sending ProxyConnect to the LDN server
+     *
+     * Called by the LDN MITM service during initialization.
+     *
+     * @param callback Function to call when TCP proxy sockets call Connect()
+     *
+     * @note Thread-safe
+     */
+    /// @gdb{tag="BSD:CONFIG", msg="SetProxyConnectCallback"}
+    void SetProxyConnectCallback(SendProxyConnectCallback callback);
+
+    /**
+     * @brief Send ProxyConnect request for TCP connection handshake
+     *
+     * Called by ProxySocket::Connect for TCP sockets.
+     *
+     * @param source_ip Source IP (host byte order)
+     * @param source_port Source port (host byte order)
+     * @param dest_ip Destination IP (host byte order)
+     * @param dest_port Destination port (host byte order)
+     * @param protocol Protocol type (TCP)
+     * @return true if request was sent, false if no callback or send failed
+     *
+     * @note Thread-safe
+     */
+    /// @gdb{tag="BSD:DATA", msg="SendProxyConnect: src=0x%x:%u -> dst=0x%x:%u", args="$x1, $x2, $x3, $x4"}
+    bool SendProxyConnect(uint32_t source_ip, uint16_t source_port,
+                          uint32_t dest_ip, uint16_t dest_port,
+                          potluck::bsd::ProtocolType protocol);
+
+    /**
+     * @brief Callback type for sending ProxyConnectReply to the LDN server
+     *
+     * This callback is invoked when a listening TCP socket accepts a connection.
+     */
+    using SendProxyConnectReplyCallback = bool (*)(uint32_t source_ip, uint16_t source_port,
+                                                    uint32_t dest_ip, uint16_t dest_port,
+                                                    potluck::bsd::ProtocolType protocol);
+
+    /**
+     * @brief Set the callback for sending ProxyConnectReply to the LDN server
+     *
+     * @param callback Function to call when TCP proxy sockets accept connections
+     */
+    void SetProxyConnectReplyCallback(SendProxyConnectReplyCallback callback);
+
+    /**
+     * @brief Send ProxyConnectReply for accepted TCP connection
+     *
+     * Called by ProxySocket::Accept to confirm a connection was accepted.
+     *
+     * @param source_ip Our IP (host byte order)
+     * @param source_port Our port (host byte order)
+     * @param dest_ip Remote IP (host byte order)
+     * @param dest_port Remote port (host byte order)
+     * @param protocol Protocol type (TCP)
+     * @return true if reply was sent, false if no callback or send failed
+     */
+    bool SendProxyConnectReply(uint32_t source_ip, uint16_t source_port,
+                                uint32_t dest_ip, uint16_t dest_port,
+                                potluck::bsd::ProtocolType protocol);
+
+    /**
+     * @brief Callback type for sending ProxyDisconnect to the LDN server
+     *
+     * This callback is invoked when a TCP proxy socket is closed.
+     */
+    using SendProxyDisconnectCallback = bool (*)(uint32_t source_ip, uint16_t source_port,
+                                                  uint32_t dest_ip, uint16_t dest_port,
+                                                  potluck::bsd::ProtocolType protocol);
+
+    /**
+     * @brief Set the callback for sending ProxyDisconnect to the LDN server
+     *
+     * @param callback Function to call when TCP proxy sockets are closed
+     */
+    void SetProxyDisconnectCallback(SendProxyDisconnectCallback callback);
+
+    /**
+     * @brief Send ProxyDisconnect for closed TCP connection
+     *
+     * Called by ProxySocket::Close to notify peer of connection close.
+     *
+     * @param source_ip Our IP (host byte order)
+     * @param source_port Our port (host byte order)
+     * @param dest_ip Remote IP (host byte order)
+     * @param dest_port Remote port (host byte order)
+     * @param protocol Protocol type (TCP)
+     * @return true if disconnect was sent, false if no callback or send failed
+     */
+    bool SendProxyDisconnect(uint32_t source_ip, uint16_t source_port,
+                              uint32_t dest_ip, uint16_t dest_port,
+                              potluck::bsd::ProtocolType protocol);
+
+    /**
+     * @brief Route incoming ProxyConnectReply to the connecting socket
+     *
+     * Called by the LDN MITM service when a ProxyConnectReply packet arrives.
+     *
+     * @param response The connect response
+     * @return true if routed successfully, false if no matching socket
+     *
+     * @note Thread-safe
+     */
+    /// @gdb{tag="BSD:DATA", msg="RouteConnectResponse"}
+    bool RouteConnectResponse(const potluck::protocol::ProxyConnectResponse& response);
+
+    /**
+     * @brief Route incoming ProxyConnect to a listening socket (accept queue)
+     *
+     * Called by the LDN MITM service when a ProxyConnect packet arrives
+     * for a listening socket (incoming TCP connection).
+     *
+     * @param request The connect request
+     * @return true if routed successfully, false if no matching listener
+     *
+     * @note Thread-safe
+     */
+    /// @gdb{tag="BSD:DATA", msg="RouteConnectRequest"}
+    bool RouteConnectRequest(const potluck::protocol::ProxyConnectRequest& request);
+
+    /**
+     * @brief Route incoming ProxyDisconnect to the TCP socket it ends
+     *
+     * Ends an established stream, or refuses a pending connect when the
+     * listener turned us away.
+     *
+     * @return true if a socket matched
+     */
+    bool RouteDisconnect(const potluck::protocol::ProxyDisconnectMessage& message);
+
+    /**
+     * @brief Take the listener's oldest queued connection and register it under fd
+     *
+     * @param out_remote Peer address (network order) for accept()'s sockaddr
+     * @param out_errno EMFILE when no slot is free (the connection stays
+     *        queued); 0 otherwise, including when the queue emptied meanwhile
+     * @return Ref to the registered socket, or null
+     */
+    ProxySocketRef AdoptFromListener(ProxySocket& listener, s32 fd, potluck::bsd::SockAddrIn* out_remote,
+                                     s32* out_errno);
+
+    /**
+     * @brief Whether the heap can take one more ProxySocket and keep a reserve
+     *
+     * operator new returns null on exhaustion and most callers do not check,
+     * so sockets are refused well before that point.
+     */
+    static bool HasHeapRoomForSocket();
+
+    // =========================================================================
+    // LDN Network Configuration
+    // =========================================================================
+
+    /**
+     * @brief Set the local LDN IP address
+     *
+     * Called when the game receives its IP from GetIpv4Address.
+     *
+     * @param ip Local IP address in host byte order (e.g., 0x0A720001 for 10.114.0.1)
+     *
+     * @note Thread-safe
+     */
+    /// @gdb{tag="BSD:CONFIG", msg="SetLocalIp: ip=0x%x", args="$x1"}
+    void SetLocalIp(uint32_t ip);
+
+    /**
+     * @brief Get the local LDN IP address
+     *
+     * @return Local IP in host byte order, or 0 if not set
+     *
+     * @note Thread-safe
+     */
+    uint32_t GetLocalIp() const;
+
+    /**
+     * @brief Check if an IP address is in the LDN network
+     *
+     * @param ip IP address in host byte order
+     * @return true if ip is in 10.114.0.0/16
+     */
+    static bool IsLdnAddress(uint32_t ip) {
+        return potluck::bsd::IsLdnAddress(ip);
+    }
+
+    /**
+     * @brief Check if a sockaddr_in is in the LDN network
+     *
+     * @param addr Address to check
+     * @return true if address is in 10.114.0.0/16
+     */
+    static bool IsLdnAddress(const potluck::bsd::SockAddrIn& addr) {
+        return addr.IsLdnAddress();
+    }
+
+    // =========================================================================
+    // Statistics
+    // =========================================================================
+
+    /**
+     * @brief Get the number of active proxy sockets
+     * @return Number of proxy sockets currently managed
+     */
+    size_t GetActiveSocketCount() const;
+
+    /**
+     * @brief Get the number of available ephemeral ports
+     *
+     * @param protocol Protocol type
+     * @return Available port count
+     */
+    size_t GetAvailablePortCount(potluck::bsd::ProtocolType protocol) const;
+
+    /**
+     * @brief Deliver pending packets to a newly bound socket
+     *
+     * Called after Bind() to deliver any packets that arrived before
+     * the socket was bound.
+     *
+     * @param socket The socket to deliver to
+     * @param port The port the socket is bound to
+     * @param protocol The protocol type
+     */
+    void DeliverPendingPackets(ProxySocket* socket, uint16_t port, potluck::bsd::ProtocolType protocol);
+
+private:
+    /// Our LDN IP in wire format for a socket; caller holds m_mutex
+    uint32_t WireIpLocked(const ProxySocket& socket) const;
+
+    /// Deliver a TCP segment to its connection; caller holds m_mutex
+    bool RouteStreamDataLocked(uint32_t source_ip, uint16_t source_port, uint16_t dest_port,
+                               const void* data, size_t data_len);
+
+    /**
+     * @brief Private constructor (singleton)
+     */
+    ProxySocketManager() = default;
+
+    /**
+     * @brief Destructor
+     */
+    ~ProxySocketManager() = default;
+
+    /**
+     * @brief Find all sockets matching the given destination
+     *
+     * For broadcast/multicast packets, multiple sockets may match.
+     * PIA mesh discovery relies on broadcast UDP reaching all
+     * listening sockets on the same port.
+     *
+     * @param dest_ip Destination IP (host byte order)
+     * @param dest_port Destination port (host byte order)
+     * @param protocol Protocol type
+     * @param out_sockets Output vector to populate with matching sockets
+     * @return Number of matching sockets found
+     *
+     * @note Caller must hold m_mutex
+     */
+    size_t FindAllSocketsByDestination(uint32_t dest_ip, uint16_t dest_port,
+                                        potluck::bsd::ProtocolType protocol,
+                                        ProxySocket* out_sockets[], size_t max_sockets);
+
+    /**
+     * @brief Mutex for thread safety
+     */
+    mutable os::Mutex m_mutex{false};
+
+    using SocketMap = std::unordered_map<s32, std::unique_ptr<ProxySocket>>;
+
+    /**
+     * @brief Close sockets already removed from m_sockets
+     * @note Caller must NOT hold m_mutex (Close() sends ProxyDisconnect, which locks it)
+     */
+    static void CloseDetachedSocket(const std::unique_ptr<ProxySocket>& socket);
+    static void CloseDetachedSockets(const SocketMap& sockets);
+    static void WaitForLastUser(const ProxySocket& socket);
+
+    /**
+     * @brief Map of file descriptor to ProxySocket
+     */
+    SocketMap m_sockets;
+
+    /**
+     * @brief Ephemeral port pool
+     */
+    EphemeralPortPool m_port_pool;
+
+    /**
+     * @brief Local LDN IP address (host byte order)
+     */
+    uint32_t m_local_ip{0};
+
+    /**
+     * @brief Callback for sending ProxyData to LDN server
+     */
+    SendProxyDataCallback m_send_callback{nullptr};
+
+    /**
+     * @brief Callback for sending ProxyConnect to LDN server (TCP handshake)
+     */
+    SendProxyConnectCallback m_proxy_connect_callback{nullptr};
+
+    /**
+     * @brief Callback for sending ProxyConnectReply to LDN server (TCP accept)
+     */
+    SendProxyConnectReplyCallback m_proxy_connect_reply_callback{nullptr};
+
+    /**
+     * @brief Callback for sending ProxyDisconnect to LDN server (TCP close)
+     */
+    SendProxyDisconnectCallback m_proxy_disconnect_callback{nullptr};
+
+    // =========================================================================
+    // Packet Buffering (for packets arriving before socket bind)
+    // =========================================================================
+
+    static constexpr size_t MaxPendingPackets = 16;
+    static constexpr size_t PendingPayloadMax = 1400;
+
+    struct PendingPacket {
+        uint32_t source_ip;
+        uint16_t source_port;
+        uint32_t dest_ip;
+        uint16_t dest_port;
+        uint16_t len;
+        potluck::bsd::ProtocolType protocol;
+        uint8_t data[PendingPayloadMax];
+    };
+
+    // Fixed-size ring buffer — same rationale as ProxySocket's rx ring:
+    // no heap allocation per arriving packet.
+    PendingPacket m_pending_ring[MaxPendingPackets];
+    size_t m_pending_head = 0;
+    size_t m_pending_tail = 0;
+    size_t m_pending_count = 0;
+
+    /**
+     * @brief Data-plane counters for the session summary logged by Reset()
+     */
+    struct Stats {
+        std::atomic<u32> delivered{0};       ///< Packets handed to game sockets
+        std::atomic<u32> buffered{0};        ///< Packets parked until a socket binds
+        std::atomic<u32> dropped{0};         ///< Parked packets overwritten before delivery
+        std::atomic<u32> sent{0};            ///< Packets the game sent to the relay
+        std::atomic<u32> send_failed{0};     ///< Sends the relay path rejected
+        std::atomic<u32> tcp_refused{0};     ///< TCP connects with no TCP relay path
+        std::atomic<u32> tcp_out{0};         ///< TCP connects the game started
+        std::atomic<u32> tcp_in{0};          ///< TCP connections queued for accept
+        std::atomic<u32> tcp_turned_away{0}; ///< Incoming TCP connects we refused
+        std::atomic<u32> tcp_unmatched{0};   ///< TCP segments with no matching connection
+    };
+    Stats m_stats;
+};
+
+} // namespace ams::mitm::bsd
