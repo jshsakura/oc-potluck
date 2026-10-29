@@ -51,7 +51,7 @@ PotLuck has three parts. Install the Switch components once; run a server only i
 - A Nintendo Switch you own, running [Atmosphere](https://github.com/Atmosphere-NX/Atmosphere)
 - Games you own that offer local wireless play
 - For the overlay: nx-ovlloader with an overlay menu such as Ultrahand
-- For remote mode: a relay server address (see [Relay server](#relay-server))
+- For remote mode: a relay you host yourself. PotLuck provides no public server, so you or a friend must run one (see [Relay server](#relay-server)). Local mode needs none
 
 Every player needs a compatible local wireless game and game version. The game must offer an LDN menu; PotLuck does not turn a single-player game into multiplayer or replace its official online service. Start with two consoles before adding more players.
 
@@ -63,14 +63,14 @@ Every player needs a compatible local wireless game and game version. The game m
 2. Open it from the Homebrew Menu and choose install. It downloads the latest release, checks it, and installs it.
 3. Restart the console.
 
-The installer also sets the server address, tests the connection, shows diagnostics, updates and uninstalls PotLuck. If ldn_mitm is installed, it turns off only ldn_mitm's autostart (`flags/boot2.flag`) and turns it back on if you uninstall PotLuck.
+The installer also sets the server address, tests the connection, shows diagnostics, updates and uninstalls PotLuck. If you already use ldn_mitm, you don't need to do anything: the installer turns off only ldn_mitm's autostart (`flags/boot2.flag`) for you and turns it back on if you uninstall PotLuck.
 
 Close the game before installing or updating, and back up an existing `config.ini` before manual changes. To update, use the installer's update action or replace the module and overlay together from one release, then restart the console. The installer stages and checks release files before replacing them and can recover an interrupted installation when opened again; do not remove its recovery files during that process.
 
 ### By hand
 
 1. Download `potluck-v*.zip` from [Releases](https://github.com/jshsakura/oc-potluck/releases/latest) and extract it to the root of the SD card.
-2. If ldn_mitm is installed, delete `atmosphere/contents/4200000000000010/flags/boot2.flag`. Only one LDN module can run at a time.
+2. If ldn_mitm is installed, delete `atmosphere/contents/4200000000000010/flags/boot2.flag`. The installer does this step for you. Only one LDN module can run at a time.
 3. Restart the console.
 
 ## Use
