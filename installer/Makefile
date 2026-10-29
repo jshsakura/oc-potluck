@@ -40,7 +40,7 @@ include $(DEVKITPRO)/libnx/switch_rules
 TARGET		:=	potluck-installer
 APP_TITLE	:=	PotLuck Installer
 APP_AUTHOR	:=	jshsakura
-APP_VERSION	:=	0.3.12
+APP_VERSION	:=	0.3.13
 BUILD		:=	build
 SOURCES		:=	source
 DATA		:=	data
