@@ -5,7 +5,15 @@ description: "Install with the app or release ZIP, then verify the module."
 
 ## Before you begin
 
-Prepare Atmosphere, an SD card backup, and a game with local wireless play. For the overlay, install nx-ovlloader and a menu such as Ultrahand. Close the game before changes. Keep **only one LDN interception module enabled**.
+Prepare Atmosphere, an SD card backup, and a game with local wireless play. For the overlay, install nx-ovlloader and a menu such as Ultrahand. Close the game before changes.
+
+:::tip[Already using ldn_mitm?]
+**You don't need to do anything.** The installer finds ldn_mitm and disables it for you, then turns it back on if you uninstall PotLuck. Disabling it yourself is only needed for a manual ZIP install.
+:::
+
+:::caution[Remote play needs a relay you host yourself]
+PotLuck does not provide a public server. To play with friends far away, you or one of your friends must run a relay with [Docker](../relay-server/), on a [NAS or Synology](../synology/), or [from source](../relay-native/), and everyone enters the same address. A relay behind a router also needs port forwarding. Local mode on the same Wi-Fi works without any server.
+:::
 
 ## Install with the app
 
@@ -14,13 +22,13 @@ Prepare Atmosphere, an SD card backup, and a game with local wireless play. For 
 3. Choose Install. Keep the network and SD card available until checking and replacement finish.
 4. Restart the console. Open the overlay menu (normally **L + D-Pad Down + Right Stick Click**) and choose **potluck.**
 
-The installer disables ldn_mitm's autostart flag when found and records that change for restoration on uninstall. It need not remain running during play.
+If ldn_mitm is installed, the installer turns off only its autostart flag (`boot2.flag`) and records the change. There is nothing for you to delete or disable, and uninstalling PotLuck from the installer turns ldn_mitm back on. The installer need not remain running during play.
 
 ## Install a ZIP manually
 
 1. Download `potluck-v*.zip` from Releases. Back up an existing configuration.
 2. Extract the SD layout to the card root, merging directories. Use the module and overlay from the **same release**.
-3. If ldn_mitm is installed, remove only `atmosphere/contents/4200000000000010/flags/boot2.flag` to disable autostart. Keep its directory for later restoration.
+3. If ldn_mitm is installed, remove only `atmosphere/contents/4200000000000010/flags/boot2.flag` to disable autostart. The installer does this step for you; only one LDN module may be enabled. Keep its directory for later restoration.
 4. Restart and open the PotLuck overlay.
 
 ```text
